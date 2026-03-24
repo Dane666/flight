@@ -1,0 +1,516 @@
+import time
+from datetime import date, datetime, timedelta
+
+from flight_monitor.config import AppConfig
+from flight_monitor.fx import FxConverter
+from flight_monitor.models import PriceQuote, Route
+from flight_monitor.notifier import AlertMessage, ConsoleNotifier, EmailNotifier
+from flight_monitor.providers.base import PriceProvider
+from flight_monitor.storage import PriceStorage
+
+
+def build_roundtrip_pairs(window_start: date, window_end: date) -> list[tuple[date, date]]:
+    if window_end <= window_start:
+        raise ValueError("window_end 必须晚于 window_start")
+
+    all_days: list[date] = []
+    current = window_start
+    while current <= window_end:
+        all_days.append(current)
+        current += timedelta(days=1)
+
+    pairs: list[tuple[date, date]] = []
+    for depart_day in all_days:
+        for return_day in all_days:
+            if return_day > depart_day:
+                pairs.append((depart_day, return_day))
+    return pairs
+
+
+class FlightMonitor:
+    def __init__(
+        self,
+        config: AppConfig,
+        provider: PriceProvider,
+        storage: PriceStorage,
+        notifier: ConsoleNotifier | EmailNotifier,
+    ) -> None:
+        self.config = config
+        self.provider = provider
+        self.storage = storage
+        self.notifier = notifier
+        self.fx_converter = FxConverter()
+
+    def _evaluate_price_position(
+        self,
+        current_price: float,
+        stats: dict[str, float | int | None],
+    ) -> str:
+        count = int(stats.get("count") or 0)
+        historical_min = stats.get("min")
+        historical_max = stats.get("max")
+
+        if historical_min is None or historical_max is None or count == 0:
+            return "新样本"
+
+        if historical_max == historical_min:
+            return "低位"
+
+        ratio = (current_price - historical_min) / (
+            historical_max - historical_min
+        )
+        if ratio <= 0.33:
+            return "低位"
+        if ratio >= 0.66:
+            return "高位"
+        return "中位"
+
+    def _is_depart_time_allowed(self, depart_time: str | None) -> bool:
+        min_depart_time = self.config.min_depart_time
+        if not min_depart_time:
+            return True
+        if not depart_time:
+            return False
+
+        depart_hhmm = depart_time.split("+")[0]
+        try:
+            depart_dt = datetime.strptime(depart_hhmm, "%H:%M")
+            min_dt = datetime.strptime(min_depart_time, "%H:%M")
+        except ValueError:
+            return True
+        return depart_dt >= min_dt
+
+    def _get_active_date_pair(self) -> tuple[date, date]:
+        if self.config.fixed_depart_date and self.config.fixed_return_date:
+            return self.config.fixed_depart_date, self.config.fixed_return_date
+        pairs = build_roundtrip_pairs(
+            window_start=self.config.window_start,
+            window_end=self.config.window_end,
+        )
+        if not pairs:
+            raise ValueError("没有可用的去返日期组合")
+        return pairs[0]
+
+    def run_once(self, quick: bool = False) -> None:
+        print("[RUN] 开始执行 run-once", flush=True)
+        if self.config.fixed_depart_date and self.config.fixed_return_date:
+            pairs = [
+                (self.config.fixed_depart_date, self.config.fixed_return_date)
+            ]
+            print(
+                "[RUN] 使用固定去返日期 "
+                f"{self.config.fixed_depart_date}/{self.config.fixed_return_date}",
+                flush=True,
+            )
+        else:
+            pairs = build_roundtrip_pairs(
+                window_start=self.config.window_start,
+                window_end=self.config.window_end,
+            )
+        if quick:
+            pairs = pairs[:1]
+            print(
+                "[RUN] quick 模式已启用：每个出发地仅抓取 1 个日期组合",
+                flush=True,
+            )
+        print(
+            f"[RUN] 监控组合数: origins={len(self.config.origins)}, pairs={len(pairs)}",
+            flush=True,
+        )
+
+        for origin in self.config.origins:
+            route = Route(origin=origin, destination=self.config.destination)
+            for depart_date, return_date in pairs:
+                print(
+                    "[RUN] 查询 "
+                    f"{origin}->{self.config.destination} "
+                    f"{depart_date}/{return_date}",
+                    flush=True,
+                )
+                source_price = self.provider.get_roundtrip_price(
+                    origin=origin,
+                    destination=self.config.destination,
+                    depart_date=depart_date,
+                    return_date=return_date,
+                    currency=self.config.currency,
+                )
+                if source_price is None:
+                    print(
+                        "[RUN] 未获取到价格 "
+                        f"{origin}->{self.config.destination} "
+                        f"{depart_date}/{return_date}",
+                        flush=True,
+                    )
+                    continue
+
+                source_currency = (
+                    getattr(self.provider, "quote_currency", None)
+                    or self.config.currency
+                )
+                target_currency = self.config.currency
+                exchange_rate = 1.0
+                converted_price = source_price
+
+                if source_currency != target_currency:
+                    converted_price, exchange_rate = self.fx_converter.convert(
+                        amount=source_price,
+                        base=source_currency,
+                        target=target_currency,
+                    )
+
+                meta = self.provider.get_last_quote_meta()
+                historical_stats = self.storage.get_price_stats(
+                    route=route,
+                    depart_date=depart_date.isoformat(),
+                    return_date=return_date.isoformat(),
+                    currency=target_currency,
+                    provider=self.provider.name,
+                    source_currency=source_currency,
+                )
+                position_text = self._evaluate_price_position(
+                    current_price=converted_price,
+                    stats=historical_stats,
+                )
+
+                quote = PriceQuote(
+                    route=route,
+                    depart_date=depart_date,
+                    return_date=return_date,
+                    total_price=converted_price,
+                    currency=target_currency,
+                    provider=self.provider.name,
+                    observed_at=datetime.now(),
+                    depart_time=(meta.get("depart_time") or None),
+                    arrive_time=(meta.get("arrive_time") or None),
+                    flight_number=(meta.get("flight_number") or None),
+                    source_price=source_price,
+                    source_currency=source_currency,
+                    exchange_rate=exchange_rate,
+                    price_position=position_text,
+                )
+
+                if not self._is_depart_time_allowed(quote.depart_time):
+                    print(
+                        "[RUN] 跳过（不满足最早起飞时间） "
+                        f"{origin}->{self.config.destination} "
+                        f"{depart_date}/{return_date} "
+                        f"dep={quote.depart_time} "
+                        f"min={self.config.min_depart_time}",
+                        flush=True,
+                    )
+                    continue
+
+                self.storage.save_quote(quote)
+
+                historical_low = self.storage.get_historical_low(
+                    route=route,
+                    depart_date=depart_date.isoformat(),
+                    return_date=return_date.isoformat(),
+                )
+
+                if quote.total_price <= self.config.alert_threshold:
+                    alert_key = (
+                        f"{route.origin}-{route.destination}-"
+                        f"{depart_date.isoformat()}-{return_date.isoformat()}"
+                    )
+                    if self.storage.should_fire_alert(
+                        alert_key,
+                        cooldown_minutes=self.config.alert_cooldown_minutes,
+                    ):
+                        self.notifier.notify(
+                            AlertMessage(
+                                quote=quote,
+                                threshold=self.config.alert_threshold,
+                                historical_low=historical_low,
+                            )
+                        )
+                        self.storage.record_alert(alert_key)
+
+                print(
+                    "[QUOTE] "
+                    f"{origin}->{self.config.destination} "
+                    f"{depart_date}/{return_date} "
+                    f"dep={quote.depart_time or 'N/A'} "
+                    f"arr={quote.arrive_time or 'N/A'} "
+                    f"🔥PRICE={quote.total_price:.2f} {quote.currency}🔥 "
+                    f"(src={quote.source_price:.2f} {quote.source_currency}, "
+                    f"fx={quote.exchange_rate:.4f}) "
+                    f"position={quote.price_position} "
+                    f"hist(min={historical_stats.get('min')}, "
+                    f"max={historical_stats.get('max')}, "
+                    f"avg={historical_stats.get('avg')})"
+                , flush=True)
+
+        print("[RUN] run-once 执行完成", flush=True)
+
+    def run_thailand_cheapest(self) -> None:
+        depart_date, return_date = self._get_active_date_pair()
+        print(
+            "[TH] 开始检索泰国最低价 "
+            f"date={depart_date}/{return_date}",
+            flush=True,
+        )
+
+        best_item: dict[str, str | float | None] | None = None
+
+        for origin in self.config.origins:
+            for destination in self.config.thailand_destinations:
+                if origin == destination:
+                    continue
+                print(
+                    "[TH] 查询 "
+                    f"{origin}->{destination} {depart_date}/{return_date}",
+                    flush=True,
+                )
+
+                source_price = self.provider.get_roundtrip_price(
+                    origin=origin,
+                    destination=destination,
+                    depart_date=depart_date,
+                    return_date=return_date,
+                    currency=self.config.currency,
+                )
+                if source_price is None:
+                    print(
+                        "[TH] 未取到价格 "
+                        f"{origin}->{destination}",
+                        flush=True,
+                    )
+                    continue
+
+                source_currency = (
+                    getattr(self.provider, "quote_currency", None)
+                    or self.config.currency
+                )
+                converted_price = source_price
+                fx_rate = 1.0
+                if source_currency != self.config.currency:
+                    converted_price, fx_rate = self.fx_converter.convert(
+                        amount=source_price,
+                        base=source_currency,
+                        target=self.config.currency,
+                    )
+
+                meta = self.provider.get_last_quote_meta()
+                depart_time = meta.get("depart_time")
+                if not self._is_depart_time_allowed(
+                    depart_time if isinstance(depart_time, str) else None
+                ):
+                    print(
+                        "[TH] 跳过（不满足最早起飞时间） "
+                        f"{origin}->{destination} dep={depart_time}",
+                        flush=True,
+                    )
+                    continue
+
+                print(
+                    "[TH-QUOTE] "
+                    f"{origin}->{destination} "
+                    f"dep={meta.get('depart_time') or 'N/A'} "
+                    f"arr={meta.get('arrive_time') or 'N/A'} "
+                    f"🔥PRICE={converted_price:.2f} {self.config.currency}🔥 "
+                    f"(src={source_price:.2f} {source_currency}, fx={fx_rate:.4f})",
+                    flush=True,
+                )
+
+                if (
+                    best_item is None
+                    or converted_price < float(best_item["converted_price"])
+                ):
+                    best_item = {
+                        "origin": origin,
+                        "destination": destination,
+                        "depart_time": (
+                            meta.get("depart_time")
+                            if isinstance(meta.get("depart_time"), str)
+                            else None
+                        ),
+                        "arrive_time": (
+                            meta.get("arrive_time")
+                            if isinstance(meta.get("arrive_time"), str)
+                            else None
+                        ),
+                        "converted_price": converted_price,
+                        "source_price": source_price,
+                        "source_currency": source_currency,
+                        "fx_rate": fx_rate,
+                    }
+
+        if not best_item:
+            print("[TH] 未检索到可用价格", flush=True)
+            return
+
+        print(
+            "[TH-CHEAPEST] "
+            f"{best_item['origin']}->{best_item['destination']} "
+            f"{depart_date}/{return_date} "
+            f"dep={best_item['depart_time'] or 'N/A'} "
+            f"arr={best_item['arrive_time'] or 'N/A'} "
+            f"🔥PRICE={float(best_item['converted_price']):.2f} {self.config.currency}🔥 "
+            f"(src={float(best_item['source_price']):.2f} "
+            f"{best_item['source_currency']}, "
+            f"fx={float(best_item['fx_rate']):.4f})",
+            flush=True,
+        )
+
+    def _scan_cheapest_for_destinations(
+        self,
+        destinations: list[str],
+    ) -> tuple[date, date, dict[str, str | float | None] | None]:
+        depart_date, return_date = self._get_active_date_pair()
+        best_item: dict[str, str | float | None] | None = None
+
+        provider_set_verbose = getattr(self.provider, "set_verbose", None)
+        if callable(provider_set_verbose):
+            provider_set_verbose(False)
+
+        try:
+            for origin in self.config.origins:
+                for destination in destinations:
+                    if origin == destination:
+                        continue
+                    source_price = self.provider.get_roundtrip_price(
+                        origin=origin,
+                        destination=destination,
+                        depart_date=depart_date,
+                        return_date=return_date,
+                        currency=self.config.currency,
+                    )
+                    if source_price is None:
+                        continue
+
+                    source_currency = (
+                        getattr(self.provider, "quote_currency", None)
+                        or self.config.currency
+                    )
+                    converted_price = source_price
+                    fx_rate = 1.0
+                    if source_currency != self.config.currency:
+                        converted_price, fx_rate = self.fx_converter.convert(
+                            amount=source_price,
+                            base=source_currency,
+                            target=self.config.currency,
+                        )
+
+                    meta = self.provider.get_last_quote_meta()
+                    depart_time = (
+                        meta.get("depart_time")
+                        if isinstance(meta.get("depart_time"), str)
+                        else None
+                    )
+                    if not self._is_depart_time_allowed(depart_time):
+                        continue
+
+                    candidate = {
+                        "origin": origin,
+                        "destination": destination,
+                        "depart_time": depart_time,
+                        "arrive_time": (
+                            meta.get("arrive_time")
+                            if isinstance(meta.get("arrive_time"), str)
+                            else None
+                        ),
+                        "return_depart_time": (
+                            meta.get("return_depart_time")
+                            if isinstance(meta.get("return_depart_time"), str)
+                            else None
+                        ),
+                        "return_arrive_time": (
+                            meta.get("return_arrive_time")
+                            if isinstance(meta.get("return_arrive_time"), str)
+                            else None
+                        ),
+                        "outbound_journey": (
+                            meta.get("outbound_journey")
+                            if isinstance(meta.get("outbound_journey"), str)
+                            else None
+                        ),
+                        "return_journey": (
+                            meta.get("return_journey")
+                            if isinstance(meta.get("return_journey"), str)
+                            else None
+                        ),
+                        "outbound_stopovers": (
+                            meta.get("outbound_stopovers")
+                            if isinstance(meta.get("outbound_stopovers"), str)
+                            else None
+                        ),
+                        "return_stopovers": (
+                            meta.get("return_stopovers")
+                            if isinstance(meta.get("return_stopovers"), str)
+                            else None
+                        ),
+                        "converted_price": converted_price,
+                        "source_price": source_price,
+                        "source_currency": source_currency,
+                        "fx_rate": fx_rate,
+                    }
+
+                    if (
+                        best_item is None
+                        or converted_price < float(best_item["converted_price"])
+                    ):
+                        best_item = candidate
+        finally:
+            if callable(provider_set_verbose):
+                provider_set_verbose(True)
+
+        return depart_date, return_date, best_item
+
+    def run_best_deals_summary(self) -> None:
+        depart_date, return_date, pqc_best = self._scan_cheapest_for_destinations(
+            [self.config.destination]
+        )
+        _, _, thailand_best = self._scan_cheapest_for_destinations(
+            self.config.thailand_destinations
+        )
+
+        if pqc_best is None:
+            print(
+                f"[DEAL-PQC] {depart_date}/{return_date} 无可用价格",
+                flush=True,
+            )
+        else:
+            print(
+                "[DEAL-PQC] "
+                f"{pqc_best['origin']}->{pqc_best['destination']} "
+                f"{depart_date}/{return_date} "
+                f"go={pqc_best['depart_time'] or 'N/A'}->{pqc_best['arrive_time'] or 'N/A'} "
+                f"back={pqc_best['return_depart_time'] or 'N/A'}->{pqc_best['return_arrive_time'] or 'N/A'} "
+                f"back_route={pqc_best['return_journey'] or 'N/A'} "
+                f"back_stop={pqc_best['return_stopovers'] or 'N/A'} "
+                f"🔥PRICE={float(pqc_best['converted_price']):.2f} {self.config.currency}🔥 "
+                f"(src={float(pqc_best['source_price']):.2f} {pqc_best['source_currency']}, "
+                f"fx={float(pqc_best['fx_rate']):.4f})",
+                flush=True,
+            )
+
+        if thailand_best is None:
+            print(
+                f"[DEAL-TH] {depart_date}/{return_date} 无可用价格",
+                flush=True,
+            )
+        else:
+            print(
+                "[DEAL-TH] "
+                f"{thailand_best['origin']}->{thailand_best['destination']} "
+                f"{depart_date}/{return_date} "
+                f"go={thailand_best['depart_time'] or 'N/A'}->{thailand_best['arrive_time'] or 'N/A'} "
+                f"back={thailand_best['return_depart_time'] or 'N/A'}->{thailand_best['return_arrive_time'] or 'N/A'} "
+                f"back_route={thailand_best['return_journey'] or 'N/A'} "
+                f"back_stop={thailand_best['return_stopovers'] or 'N/A'} "
+                f"🔥PRICE={float(thailand_best['converted_price']):.2f} {self.config.currency}🔥 "
+                f"(src={float(thailand_best['source_price']):.2f} {thailand_best['source_currency']}, "
+                f"fx={float(thailand_best['fx_rate']):.4f})",
+                flush=True,
+            )
+
+    def run_loop(self) -> None:
+        print(
+            f"开始循环监控: 每 {self.config.interval_minutes} 分钟执行一次"
+        , flush=True)
+        while True:
+            print("\n==== 新一轮监控开始 ====", flush=True)
+            self.run_once()
+            print("==== 本轮结束 ====", flush=True)
+            time.sleep(self.config.interval_minutes * 60)
