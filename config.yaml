@@ -1,0 +1,37 @@
+provider: trip_scrape
+kiwi_api_key: null
+amadeus_client_id: null
+amadeus_client_secret: null
+amadeus_base_url: https://test.api.amadeus.com
+trip_scrape_timeout_seconds: 60
+currency: CNY
+interval_minutes: 30
+alert_threshold: 2200
+alert_cooldown_minutes: 180
+notifier: console
+smtp_host: null
+smtp_port: 587
+smtp_username: null
+smtp_password: null
+smtp_use_tls: true
+email_from: null
+email_to: []
+feishu_webhook_url: https://www.feishu.cn/flow/api/trigger-webhook/4e26a5779be97a3544346a0197da19b9
+feishu_secret: null
+db_path: data/flight_prices.db
+origins:
+- CAN
+- SZX
+- HKG
+destination: PQC
+thailand_destinations:
+- BKK
+- DMK
+- HKT
+- CNX
+- KBV
+window_start: '2026-06-18'
+window_end: '2026-06-21'
+fixed_depart_date: '2026-06-18'
+fixed_return_date: '2026-06-21'
+min_depart_time: '12:00'
