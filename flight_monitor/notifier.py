@@ -1,6 +1,13 @@
 from dataclasses import dataclass
 from email.message import EmailMessage
+import base64
+import hashlib
+import hmac
+import json
+import time
 import smtplib
+
+import requests
 
 from flight_monitor.models import PriceQuote
 
@@ -84,6 +91,67 @@ class EmailNotifier:
 
         print(
             "[ALERT-EMAIL-SENT] "
+            f"{quote.route.origin}->{quote.route.destination} "
+            f"{quote.depart_date}/{quote.return_date}"
+        )
+
+
+class FeishuNotifier:
+    def __init__(
+        self,
+        webhook_url: str,
+        secret: str | None = None,
+    ) -> None:
+        self.webhook_url = webhook_url
+        self.secret = secret
+
+    def _build_sign_headers(self) -> dict[str, str]:
+        if not self.secret:
+            return {}
+
+        timestamp = str(int(time.time()))
+        sign_str = f"{timestamp}\n{self.secret}".encode("utf-8")
+        digest = hmac.new(
+            self.secret.encode("utf-8"),
+            sign_str,
+            digestmod=hashlib.sha256,
+        ).digest()
+        sign = base64.b64encode(digest).decode("utf-8")
+        return {"timestamp": timestamp, "sign": sign}
+
+    def send_text(self, text: str) -> None:
+        payload = {
+            "msg_type": "text",
+            "content": {"text": text},
+        }
+        payload.update(self._build_sign_headers())
+
+        response = requests.post(
+            self.webhook_url,
+            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+            headers={"Content-Type": "application/json; charset=utf-8"},
+            timeout=15,
+        )
+        response.raise_for_status()
+
+    def notify(self, message: AlertMessage) -> None:
+        quote = message.quote
+        low_text = (
+            f"{message.historical_low:.2f}"
+            if message.historical_low is not None
+            else "N/A"
+        )
+        text = (
+            "[机票提醒]\n"
+            f"航线: {quote.route.origin}->{quote.route.destination}\n"
+            f"日期: {quote.depart_date} ~ {quote.return_date}\n"
+            f"价格: {quote.total_price:.2f} {quote.currency}\n"
+            f"阈值: {message.threshold:.2f}\n"
+            f"历史低价: {low_text}"
+        )
+        self.send_text(text)
+        print(
+            "[ALERT-FEISHU-SENT] "
             f"{quote.route.origin}->{quote.route.destination} "
             f"{quote.depart_date}/{quote.return_date}"
         )

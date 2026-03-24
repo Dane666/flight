@@ -4,7 +4,12 @@ from datetime import date, datetime, timedelta
 from flight_monitor.config import AppConfig
 from flight_monitor.fx import FxConverter
 from flight_monitor.models import PriceQuote, Route
-from flight_monitor.notifier import AlertMessage, ConsoleNotifier, EmailNotifier
+from flight_monitor.notifier import (
+    AlertMessage,
+    ConsoleNotifier,
+    EmailNotifier,
+    FeishuNotifier,
+)
 from flight_monitor.providers.base import PriceProvider
 from flight_monitor.storage import PriceStorage
 
@@ -33,7 +38,7 @@ class FlightMonitor:
         config: AppConfig,
         provider: PriceProvider,
         storage: PriceStorage,
-        notifier: ConsoleNotifier | EmailNotifier,
+        notifier: ConsoleNotifier | EmailNotifier | FeishuNotifier,
     ) -> None:
         self.config = config
         self.provider = provider
@@ -465,13 +470,16 @@ class FlightMonitor:
             self.config.thailand_destinations
         )
 
+        summary_lines: list[str] = [
+            f"[机票汇总] {depart_date}/{return_date}",
+        ]
+
         if pqc_best is None:
-            print(
-                f"[DEAL-PQC] {depart_date}/{return_date} 无可用价格",
-                flush=True,
-            )
+            line = f"[DEAL-PQC] {depart_date}/{return_date} 无可用价格"
+            print(line, flush=True)
+            summary_lines.append(line)
         else:
-            print(
+            line = (
                 "[DEAL-PQC] "
                 f"{pqc_best['origin']}->{pqc_best['destination']} "
                 f"{depart_date}/{return_date} "
@@ -481,17 +489,17 @@ class FlightMonitor:
                 f"back_stop={pqc_best['return_stopovers'] or 'N/A'} "
                 f"🔥PRICE={float(pqc_best['converted_price']):.2f} {self.config.currency}🔥 "
                 f"(src={float(pqc_best['source_price']):.2f} {pqc_best['source_currency']}, "
-                f"fx={float(pqc_best['fx_rate']):.4f})",
-                flush=True,
+                f"fx={float(pqc_best['fx_rate']):.4f})"
             )
+            print(line, flush=True)
+            summary_lines.append(line)
 
         if thailand_best is None:
-            print(
-                f"[DEAL-TH] {depart_date}/{return_date} 无可用价格",
-                flush=True,
-            )
+            line = f"[DEAL-TH] {depart_date}/{return_date} 无可用价格"
+            print(line, flush=True)
+            summary_lines.append(line)
         else:
-            print(
+            line = (
                 "[DEAL-TH] "
                 f"{thailand_best['origin']}->{thailand_best['destination']} "
                 f"{depart_date}/{return_date} "
@@ -501,9 +509,21 @@ class FlightMonitor:
                 f"back_stop={thailand_best['return_stopovers'] or 'N/A'} "
                 f"🔥PRICE={float(thailand_best['converted_price']):.2f} {self.config.currency}🔥 "
                 f"(src={float(thailand_best['source_price']):.2f} {thailand_best['source_currency']}, "
-                f"fx={float(thailand_best['fx_rate']):.4f})",
-                flush=True,
+                f"fx={float(thailand_best['fx_rate']):.4f})"
             )
+            print(line, flush=True)
+            summary_lines.append(line)
+
+        if self.config.feishu_webhook_url:
+            try:
+                feishu_notifier = FeishuNotifier(
+                    webhook_url=self.config.feishu_webhook_url,
+                    secret=self.config.feishu_secret,
+                )
+                feishu_notifier.send_text("\n".join(summary_lines))
+                print("[FEISHU] 汇总推送成功", flush=True)
+            except Exception as error:
+                print(f"[FEISHU] 汇总推送失败: {error}", flush=True)
 
     def run_loop(self) -> None:
         print(

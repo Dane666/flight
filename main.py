@@ -8,7 +8,7 @@ from flight_monitor.config import (
     save_config,
 )
 from flight_monitor.monitor import FlightMonitor
-from flight_monitor.notifier import ConsoleNotifier, EmailNotifier
+from flight_monitor.notifier import ConsoleNotifier, EmailNotifier, FeishuNotifier
 from flight_monitor.providers.amadeus_provider import AmadeusPriceProvider
 from flight_monitor.providers.kiwi_provider import KiwiPriceProvider
 from flight_monitor.providers.mock_provider import MockPriceProvider
@@ -88,6 +88,13 @@ def build_monitor(config_path: Path) -> FlightMonitor:
             email_from=email_from or "",
             email_to=config.email_to,
             smtp_use_tls=config.smtp_use_tls,
+        )
+    elif notifier_name == "feishu":
+        if not config.feishu_webhook_url:
+            raise ValueError("notifier=feishu 时必须配置 feishu_webhook_url")
+        notifier = FeishuNotifier(
+            webhook_url=config.feishu_webhook_url,
+            secret=config.feishu_secret,
         )
     else:
         raise ValueError(f"不支持的 notifier: {config.notifier}")

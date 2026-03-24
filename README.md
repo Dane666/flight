@@ -61,6 +61,7 @@ python main.py run-thailand-cheapest --config config.yaml
 - 触发时间：每天北京时间 00:00（GitHub 使用 UTC，对应 `0 16 * * *`）
 - 运行命令：`python main.py run-best-deals-summary --config config.yaml`
 - 支持手动触发：`workflow_dispatch`
+- 配置来源：优先读取仓库 Secret `MONITOR_CONFIG_YAML` 写入 `config.yaml`，若未配置则自动生成默认配置
 
 ## 配置说明（核心字段）
 
@@ -73,9 +74,10 @@ python main.py run-thailand-cheapest --config config.yaml
 - `alert_threshold`: 触发告警的价格上限
 - `alert_cooldown_minutes`: 同一航线+日期组合告警冷却时间
 - `window_start` / `window_end`: 往返日期窗口（系统会生成 `去程 < 返程` 的组合）
-- `notifier`: `console` 或 `email`
+- `notifier`: `console` / `email` / `feishu`
 - `smtp_host`/`smtp_port`/`smtp_username`/`smtp_password`/`smtp_use_tls`: 邮件配置
 - `email_from`/`email_to`: 发件人与收件人列表
+- `feishu_webhook_url`/`feishu_secret`: 飞书机器人 webhook 与可选签名密钥
 
 ## 启用 Kiwi 实时查询（示例）
 
@@ -134,3 +136,18 @@ email_from: your_email@qq.com
 email_to:
 	- receiver1@example.com
 ```
+
+## 启用飞书推送（示例）
+
+编辑 `config.yaml`：
+
+```yaml
+notifier: feishu
+feishu_webhook_url: "https://open.feishu.cn/open-apis/bot/v2/hook/xxxxx"
+feishu_secret: null
+```
+
+说明：
+
+- `feishu_secret` 仅在机器人启用了“签名校验”时填写；否则保持 `null`。
+- `run-best-deals-summary` 会在控制台输出两条最低价后，自动将同样汇总推送到飞书。

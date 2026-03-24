@@ -28,6 +28,18 @@ jobs:
         run: |
           python -m playwright install chromium
 
+      - name: Ensure config.yaml exists
+        env:
+          MONITOR_CONFIG_YAML: ${{ secrets.MONITOR_CONFIG_YAML }}
+        run: |
+          if [ -n "$MONITOR_CONFIG_YAML" ]; then
+            printf "%s\n" "$MONITOR_CONFIG_YAML" > config.yaml
+          fi
+
+          if [ ! -f config.yaml ]; then
+            python main.py init-config --force
+          fi
+
       - name: Run summary monitor
         run: |
           python main.py run-best-deals-summary --config config.yaml
