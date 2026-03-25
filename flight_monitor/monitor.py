@@ -463,6 +463,38 @@ class FlightMonitor:
         return depart_date, return_date, best_item
 
     def run_best_deals_summary(self) -> None:
+        def build_feishu_deal_block(
+            title: str,
+            deal_item: dict[str, str | float | None] | None,
+        ) -> list[str]:
+            if deal_item is None:
+                return [title, "- 状态: 无可用价格"]
+
+            return [
+                title,
+                f"- 航线: {deal_item['origin']} -> {deal_item['destination']}",
+                (
+                    "- 去程: "
+                    f"{deal_item['depart_time'] or 'N/A'} "
+                    f"-> {deal_item['arrive_time'] or 'N/A'}"
+                ),
+                (
+                    "- 返程: "
+                    f"{deal_item['return_depart_time'] or 'N/A'} "
+                    f"-> {deal_item['return_arrive_time'] or 'N/A'}"
+                ),
+                f"- 返程路由: {deal_item['return_journey'] or 'N/A'}",
+                f"- 返程中转: {deal_item['return_stopovers'] or 'N/A'}",
+                (
+                    "- 价格: "
+                    f"{float(deal_item['converted_price']):.2f} "
+                    f"{self.config.currency} "
+                    f"(原价 {float(deal_item['source_price']):.2f} "
+                    f"{deal_item['source_currency']}, "
+                    f"汇率 {float(deal_item['fx_rate']):.4f})"
+                ),
+            ]
+
         depart_date, return_date, pqc_best = self._scan_cheapest_for_destinations(
             [self.config.destination]
         )
@@ -516,11 +548,19 @@ class FlightMonitor:
 
         if self.config.feishu_webhook_url:
             try:
+                feishu_lines: list[str] = [
+                    "【机票汇总】",
+                    f"日期: {depart_date} / {return_date}",
+                    "",
+                    *build_feishu_deal_block("【PQC 最低价】", pqc_best),
+                    "",
+                    *build_feishu_deal_block("【泰国最低价】", thailand_best),
+                ]
                 feishu_notifier = FeishuNotifier(
                     webhook_url=self.config.feishu_webhook_url,
                     secret=self.config.feishu_secret,
                 )
-                feishu_notifier.send_text("\n".join(summary_lines))
+                feishu_notifier.send_text("\n".join(feishu_lines))
                 print("[FEISHU] 汇总推送成功", flush=True)
             except Exception as error:
                 print(f"[FEISHU] 汇总推送失败: {error}", flush=True)

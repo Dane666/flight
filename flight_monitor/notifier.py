@@ -119,11 +119,26 @@ class FeishuNotifier:
         sign = base64.b64encode(digest).decode("utf-8")
         return {"timestamp": timestamp, "sign": sign}
 
+    def _is_flow_webhook(self) -> bool:
+        return "feishu.cn/flow/api/trigger-webhook/" in self.webhook_url
+
+    def _flatten_text_for_flow(self, text: str) -> str:
+        chunks = [line.strip() for line in text.splitlines() if line.strip()]
+        if not chunks:
+            return text
+        return "  |  ".join(chunks)
+
     def send_text(self, text: str) -> None:
-        payload = {
-            "msg_type": "text",
-            "content": {"text": text},
-        }
+        if self._is_flow_webhook():
+            flow_text = self._flatten_text_for_flow(text)
+            payload = {
+                "text": flow_text,
+            }
+        else:
+            payload = {
+                "msg_type": "text",
+                "content": {"text": text},
+            }
         payload.update(self._build_sign_headers())
 
         response = requests.post(
