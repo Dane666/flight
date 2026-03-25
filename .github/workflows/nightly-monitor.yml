@@ -2,7 +2,9 @@ name: Nightly Flight Monitor
 
 on:
   schedule:
-    - cron: '0 16 * * *' # UTC 16:00 = Asia/Shanghai 00:00 (+1 day)
+    - cron: '0 1 * * 1-5'      # 工作日 09:00 (UTC 1:00 = 北京时间 09:00)
+    - cron: '0 10 * * 1-5'     # 工作日 18:00 (UTC 10:00 = 北京时间 18:00)
+    - cron: '0 2 * * 0,6'      # 周末 10:00 (UTC 2:00 = 北京时间 10:00)
   workflow_dispatch:
 
 jobs:
