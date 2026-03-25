@@ -79,7 +79,16 @@ def create_default_config(year: int | None = None) -> AppConfig:
 
 def load_config(config_path: Path) -> AppConfig:
     with config_path.open("r", encoding="utf-8") as file:
-        payload = yaml.safe_load(file) or {}
+        payload = yaml.safe_load(file)
+
+    if isinstance(payload, str):
+        payload = yaml.safe_load(payload)
+
+    if not isinstance(payload, dict):
+        raise ValueError(
+            "配置文件格式错误：应为 YAML 对象（key-value），"
+            f"实际类型为 {type(payload).__name__}"
+        )
 
     return AppConfig(
         provider=payload.get("provider", "mock"),

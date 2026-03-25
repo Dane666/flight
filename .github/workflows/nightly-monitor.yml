@@ -35,12 +35,29 @@ jobs:
           MONITOR_CONFIG_YAML: ${{ secrets.MONITOR_CONFIG_YAML }}
         run: |
           if [ -n "$MONITOR_CONFIG_YAML" ]; then
-            printf "%s\n" "$MONITOR_CONFIG_YAML" > config.yaml
+            echo "$MONITOR_CONFIG_YAML" > config.yaml
+            echo "Using MONITOR_CONFIG_YAML secret"
           fi
 
           if [ ! -f config.yaml ]; then
             python main.py init-config --force
+            echo "Secret not set, generated default config"
           fi
+
+      - name: Validate config format
+        run: |
+          python - <<'PYCFG'
+from pathlib import Path
+import yaml
+
+content = Path('config.yaml').read_text(encoding='utf-8')
+obj = yaml.safe_load(content)
+if isinstance(obj, str):
+    obj = yaml.safe_load(obj)
+if not isinstance(obj, dict):
+    raise SystemExit(f"Invalid config type: {type(obj).__name__}")
+print("config.yaml format is valid")
+PYCFG
 
       - name: Run summary monitor
         run: |
