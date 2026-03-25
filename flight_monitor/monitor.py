@@ -105,6 +105,60 @@ class FlightMonitor:
             return False
         return max(durations) <= max_hours
 
+    def _parse_hhmm(self, value: str | None) -> tuple[int, int] | None:
+        if not isinstance(value, str):
+            return None
+        clean = value.split("+")[0]
+        if not re.fullmatch(r"[0-2][0-9]:[0-5][0-9]", clean):
+            return None
+        hour, minute = clean.split(":")
+        return int(hour), int(minute)
+
+    def _candidate_text(
+        self,
+        candidate: dict[str, str | float | None],
+        key: str,
+    ) -> str | None:
+        value = candidate.get(key)
+        return value if isinstance(value, str) else None
+
+    def _format_leg_duration(self, depart: str | None, arrive: str | None) -> str:
+        depart_parsed = self._parse_hhmm(depart)
+        arrive_parsed = self._parse_hhmm(arrive)
+        if depart_parsed is None or arrive_parsed is None:
+            return "N/A"
+
+        depart_minutes = depart_parsed[0] * 60 + depart_parsed[1]
+        arrive_minutes = arrive_parsed[0] * 60 + arrive_parsed[1]
+        if isinstance(arrive, str) and "+" in arrive:
+            day_match = re.search(r"\+(\d+)d", arrive)
+            extra_days = int(day_match.group(1)) if day_match else 1
+            arrive_minutes += extra_days * 24 * 60
+        elif arrive_minutes < depart_minutes:
+            arrive_minutes += 24 * 60
+
+        duration = max(arrive_minutes - depart_minutes, 0)
+        hours = duration // 60
+        minutes = duration % 60
+        return f"{hours}h {minutes}m"
+
+    def _is_redeye(self, depart: str | None, arrive: str | None) -> bool:
+        for value in (depart, arrive):
+            parsed = self._parse_hhmm(value)
+            if parsed is None:
+                continue
+            hour = parsed[0]
+            if hour >= 23 or hour < 6:
+                return True
+        return False
+
+    def _count_stops(self, stop_text: str | None, detail_text: str | None) -> int:
+        if isinstance(detail_text, str) and not self._is_missing_text(detail_text):
+            return len([seg for seg in detail_text.split(";") if seg.strip()])
+        if isinstance(stop_text, str) and not self._is_missing_text(stop_text):
+            return len([seg for seg in stop_text.split(",") if seg.strip()])
+        return 0
+
     def _candidate_max_layover_hours(
         self,
         candidate: dict[str, str | float | None],
@@ -549,6 +603,11 @@ class FlightMonitor:
                             )
                             else None
                         ),
+                        "flight_number": (
+                            meta.get("flight_number")
+                            if isinstance(meta.get("flight_number"), str)
+                            else None
+                        ),
                         "converted_price": converted_price,
                         "source_price": source_price,
                         "source_currency": source_currency,
@@ -628,9 +687,43 @@ class FlightMonitor:
             if deal_item is None:
                 return [title, "- 状态: 无可用价格"]
 
+            is_direct = self._candidate_is_direct(deal_item)
+            go_duration = self._format_leg_duration(
+                self._candidate_text(deal_item, "depart_time"),
+                self._candidate_text(deal_item, "arrive_time"),
+            )
+            back_duration = self._format_leg_duration(
+                self._candidate_text(deal_item, "return_depart_time"),
+                self._candidate_text(deal_item, "return_arrive_time"),
+            )
+            go_stops = self._count_stops(
+                self._candidate_text(deal_item, "outbound_stopovers"),
+                self._candidate_text(deal_item, "outbound_stopover_details"),
+            )
+            back_stops = self._count_stops(
+                self._candidate_text(deal_item, "return_stopovers"),
+                self._candidate_text(deal_item, "return_stopover_details"),
+            )
+            redeye_text = (
+                "是"
+                if self._is_redeye(
+                    self._candidate_text(deal_item, "depart_time"),
+                    self._candidate_text(deal_item, "arrive_time"),
+                )
+                or self._is_redeye(
+                    self._candidate_text(deal_item, "return_depart_time"),
+                    self._candidate_text(deal_item, "return_arrive_time"),
+                )
+                else "否"
+            )
+
             lines = [
                 title,
+                f"- 类型: {'直飞' if is_direct else '中转'}",
                 f"- 航线: {deal_item['origin']} -> {deal_item['destination']}",
+                f"- 总时长: 去程 {go_duration} / 返程 {back_duration}",
+                f"- 中转次数: 去程 {go_stops} / 返程 {back_stops}",
+                f"- 红眼航班: {redeye_text}",
                 (
                     "- 去程: "
                     f"{deal_item['depart_time'] or 'N/A'} "
@@ -641,6 +734,7 @@ class FlightMonitor:
                     f"{deal_item['return_depart_time'] or 'N/A'} "
                     f"-> {deal_item['return_arrive_time'] or 'N/A'}"
                 ),
+                f"- 航司/航班: {deal_item['flight_number'] or 'N/A'}",
                 (
                     "- 价格: "
                     f"{float(deal_item['converted_price']):.2f} "
@@ -649,13 +743,20 @@ class FlightMonitor:
                     f"{deal_item['source_currency']}, "
                     f"汇率 {float(deal_item['fx_rate']):.4f})"
                 ),
+                "- 行李规则: 待下单页确认（抓取页未稳定提供）",
+                "- 退改签: 待下单页确认（抓取页未稳定提供）",
             ]
 
-            if self._candidate_is_direct(deal_item):
-                lines.append("- 机型类型: 直飞")
+            if is_direct:
+                lines.append("- 中转相关: 直飞，无中转")
             else:
                 lines.extend(
                     [
+                        f"- 去程中转: {deal_item['outbound_stopovers'] or 'N/A'}",
+                        (
+                            "- 去程中转明细: "
+                            f"{deal_item['outbound_stopover_details'] or 'N/A'}"
+                        ),
                         f"- 返程路由: {deal_item['return_journey'] or 'N/A'}",
                         f"- 返程中转: {deal_item['return_stopovers'] or 'N/A'}",
                         (
