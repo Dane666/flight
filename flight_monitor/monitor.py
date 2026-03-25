@@ -1,5 +1,6 @@
 import time
 from datetime import date, datetime, timedelta
+import re
 
 from flight_monitor.config import AppConfig
 from flight_monitor.fx import FxConverter
@@ -45,6 +46,63 @@ class FlightMonitor:
         self.storage = storage
         self.notifier = notifier
         self.fx_converter = FxConverter()
+
+    def _is_missing_text(self, value: str | None) -> bool:
+        if value is None:
+            return True
+        text = value.strip()
+        if not text:
+            return True
+        return text.upper() == "N/A"
+
+    def _candidate_is_direct(
+        self,
+        candidate: dict[str, str | float | None],
+    ) -> bool:
+        stop_texts = [
+            candidate.get("outbound_stopovers"),
+            candidate.get("return_stopovers"),
+            candidate.get("outbound_stopover_details"),
+            candidate.get("return_stopover_details"),
+        ]
+        for value in stop_texts:
+            if isinstance(value, str) and not self._is_missing_text(value):
+                return False
+        return True
+
+    def _extract_layover_hours(self, text: str | None) -> list[float]:
+        if not isinstance(text, str) or self._is_missing_text(text):
+            return []
+        result: list[float] = []
+        for match in re.finditer(r"([0-9]{1,2})h(?:\s*([0-9]{1,2})m)?", text):
+            hours = int(match.group(1))
+            minutes = int(match.group(2) or "0")
+            result.append(hours + minutes / 60)
+        return result
+
+    def _candidate_layover_within_limit(
+        self,
+        candidate: dict[str, str | float | None],
+        max_hours: float = 3.0,
+    ) -> bool:
+        if self._candidate_is_direct(candidate):
+            return True
+
+        durations = [
+            *self._extract_layover_hours(
+                candidate.get("outbound_stopover_details")
+                if isinstance(candidate.get("outbound_stopover_details"), str)
+                else None
+            ),
+            *self._extract_layover_hours(
+                candidate.get("return_stopover_details")
+                if isinstance(candidate.get("return_stopover_details"), str)
+                else None
+            ),
+        ]
+        if not durations:
+            return False
+        return max(durations) <= max_hours
 
     def _evaluate_price_position(
         self,
@@ -361,9 +419,15 @@ class FlightMonitor:
     def _scan_cheapest_for_destinations(
         self,
         destinations: list[str],
-    ) -> tuple[date, date, dict[str, str | float | None] | None]:
+    ) -> tuple[
+        date,
+        date,
+        dict[str, str | float | None] | None,
+        dict[str, str | float | None] | None,
+    ]:
         depart_date, return_date = self._get_active_date_pair()
         best_item: dict[str, str | float | None] | None = None
+        best_direct_item: dict[str, str | float | None] | None = None
 
         provider_set_verbose = getattr(self.provider, "set_verbose", None)
         if callable(provider_set_verbose):
@@ -467,6 +531,20 @@ class FlightMonitor:
                         "fx_rate": fx_rate,
                     }
 
+                    if self._candidate_is_direct(candidate):
+                        if (
+                            best_direct_item is None
+                            or converted_price
+                            < float(best_direct_item["converted_price"])
+                        ):
+                            best_direct_item = candidate
+
+                    if not self._candidate_layover_within_limit(
+                        candidate,
+                        max_hours=3.0,
+                    ):
+                        continue
+
                     if (
                         best_item is None
                         or converted_price < float(best_item["converted_price"])
@@ -476,17 +554,43 @@ class FlightMonitor:
             if callable(provider_set_verbose):
                 provider_set_verbose(True)
 
-        return depart_date, return_date, best_item
+        return depart_date, return_date, best_item, best_direct_item
 
     def run_best_deals_summary(self) -> None:
+        def format_deal_line(
+            prefix: str,
+            deal_item: dict[str, str | float | None],
+            depart_date_value: date,
+            return_date_value: date,
+        ) -> str:
+            base = (
+                f"{prefix} "
+                f"{deal_item['origin']}->{deal_item['destination']} "
+                f"{depart_date_value}/{return_date_value} "
+                f"go={deal_item['depart_time'] or 'N/A'}->{deal_item['arrive_time'] or 'N/A'} "
+                f"back={deal_item['return_depart_time'] or 'N/A'}->{deal_item['return_arrive_time'] or 'N/A'} "
+                f"🔥PRICE={float(deal_item['converted_price']):.2f} {self.config.currency}🔥 "
+                f"(src={float(deal_item['source_price']):.2f} {deal_item['source_currency']}, "
+                f"fx={float(deal_item['fx_rate']):.4f})"
+            )
+            if self._candidate_is_direct(deal_item):
+                return base + " direct=Y"
+            return (
+                base
+                + f" back_route={deal_item['return_journey'] or 'N/A'}"
+                + f" back_stop={deal_item['return_stopovers'] or 'N/A'}"
+                + f" back_stop_detail={deal_item['return_stopover_details'] or 'N/A'}"
+            )
+
         def build_feishu_deal_block(
             title: str,
             deal_item: dict[str, str | float | None] | None,
+            direct_item: dict[str, str | float | None] | None,
         ) -> list[str]:
             if deal_item is None:
                 return [title, "- 状态: 无可用价格"]
 
-            return [
+            lines = [
                 title,
                 f"- 航线: {deal_item['origin']} -> {deal_item['destination']}",
                 (
@@ -499,12 +603,6 @@ class FlightMonitor:
                     f"{deal_item['return_depart_time'] or 'N/A'} "
                     f"-> {deal_item['return_arrive_time'] or 'N/A'}"
                 ),
-                f"- 返程路由: {deal_item['return_journey'] or 'N/A'}",
-                f"- 返程中转: {deal_item['return_stopovers'] or 'N/A'}",
-                (
-                    "- 返程中转明细: "
-                    f"{deal_item['return_stopover_details'] or 'N/A'}"
-                ),
                 (
                     "- 价格: "
                     f"{float(deal_item['converted_price']):.2f} "
@@ -515,10 +613,48 @@ class FlightMonitor:
                 ),
             ]
 
-        depart_date, return_date, pqc_best = self._scan_cheapest_for_destinations(
+            if self._candidate_is_direct(deal_item):
+                lines.append("- 机型类型: 直飞")
+            else:
+                lines.extend(
+                    [
+                        f"- 返程路由: {deal_item['return_journey'] or 'N/A'}",
+                        f"- 返程中转: {deal_item['return_stopovers'] or 'N/A'}",
+                        (
+                            "- 返程中转明细: "
+                            f"{deal_item['return_stopover_details'] or 'N/A'}"
+                        ),
+                    ]
+                )
+                if direct_item is not None:
+                    lines.extend(
+                        [
+                            "- 备选最优直飞:",
+                            (
+                                f"  {direct_item['origin']}->{direct_item['destination']} "
+                                f"go={direct_item['depart_time'] or 'N/A'}->{direct_item['arrive_time'] or 'N/A'} "
+                                f"back={direct_item['return_depart_time'] or 'N/A'}->{direct_item['return_arrive_time'] or 'N/A'} "
+                                f"price={float(direct_item['converted_price']):.2f} {self.config.currency}"
+                            ),
+                        ]
+                    )
+
+            return lines
+
+        (
+            depart_date,
+            return_date,
+            pqc_best,
+            pqc_best_direct,
+        ) = self._scan_cheapest_for_destinations(
             [self.config.destination]
         )
-        _, _, thailand_best = self._scan_cheapest_for_destinations(
+        (
+            _,
+            _,
+            thailand_best,
+            thailand_best_direct,
+        ) = self._scan_cheapest_for_destinations(
             self.config.thailand_destinations
         )
 
@@ -531,40 +667,52 @@ class FlightMonitor:
             print(line, flush=True)
             summary_lines.append(line)
         else:
-            line = (
-                "[DEAL-PQC] "
-                f"{pqc_best['origin']}->{pqc_best['destination']} "
-                f"{depart_date}/{return_date} "
-                f"go={pqc_best['depart_time'] or 'N/A'}->{pqc_best['arrive_time'] or 'N/A'} "
-                f"back={pqc_best['return_depart_time'] or 'N/A'}->{pqc_best['return_arrive_time'] or 'N/A'} "
-                f"back_route={pqc_best['return_journey'] or 'N/A'} "
-                f"back_stop={pqc_best['return_stopovers'] or 'N/A'} "
-                f"🔥PRICE={float(pqc_best['converted_price']):.2f} {self.config.currency}🔥 "
-                f"(src={float(pqc_best['source_price']):.2f} {pqc_best['source_currency']}, "
-                f"fx={float(pqc_best['fx_rate']):.4f})"
+            line = format_deal_line(
+                "[DEAL-PQC]",
+                pqc_best,
+                depart_date,
+                return_date,
             )
             print(line, flush=True)
             summary_lines.append(line)
+            if (
+                not self._candidate_is_direct(pqc_best)
+                and pqc_best_direct is not None
+            ):
+                direct_line = format_deal_line(
+                    "[DEAL-PQC-DIRECT]",
+                    pqc_best_direct,
+                    depart_date,
+                    return_date,
+                )
+                print(direct_line, flush=True)
+                summary_lines.append(direct_line)
 
         if thailand_best is None:
             line = f"[DEAL-TH] {depart_date}/{return_date} 无可用价格"
             print(line, flush=True)
             summary_lines.append(line)
         else:
-            line = (
-                "[DEAL-TH] "
-                f"{thailand_best['origin']}->{thailand_best['destination']} "
-                f"{depart_date}/{return_date} "
-                f"go={thailand_best['depart_time'] or 'N/A'}->{thailand_best['arrive_time'] or 'N/A'} "
-                f"back={thailand_best['return_depart_time'] or 'N/A'}->{thailand_best['return_arrive_time'] or 'N/A'} "
-                f"back_route={thailand_best['return_journey'] or 'N/A'} "
-                f"back_stop={thailand_best['return_stopovers'] or 'N/A'} "
-                f"🔥PRICE={float(thailand_best['converted_price']):.2f} {self.config.currency}🔥 "
-                f"(src={float(thailand_best['source_price']):.2f} {thailand_best['source_currency']}, "
-                f"fx={float(thailand_best['fx_rate']):.4f})"
+            line = format_deal_line(
+                "[DEAL-TH]",
+                thailand_best,
+                depart_date,
+                return_date,
             )
             print(line, flush=True)
             summary_lines.append(line)
+            if (
+                not self._candidate_is_direct(thailand_best)
+                and thailand_best_direct is not None
+            ):
+                direct_line = format_deal_line(
+                    "[DEAL-TH-DIRECT]",
+                    thailand_best_direct,
+                    depart_date,
+                    return_date,
+                )
+                print(direct_line, flush=True)
+                summary_lines.append(direct_line)
 
         if self.config.feishu_webhook_url:
             try:
@@ -572,9 +720,17 @@ class FlightMonitor:
                     "【机票汇总】",
                     f"日期: {depart_date} / {return_date}",
                     "",
-                    *build_feishu_deal_block("【PQC 最低价】", pqc_best),
+                    *build_feishu_deal_block(
+                        "【PQC 最低价】",
+                        pqc_best,
+                        pqc_best_direct,
+                    ),
                     "",
-                    *build_feishu_deal_block("【泰国最低价】", thailand_best),
+                    *build_feishu_deal_block(
+                        "【泰国最低价】",
+                        thailand_best,
+                        thailand_best_direct,
+                    ),
                 ]
                 feishu_notifier = FeishuNotifier(
                     webhook_url=self.config.feishu_webhook_url,
