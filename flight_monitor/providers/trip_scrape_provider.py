@@ -262,6 +262,61 @@ class TripScrapePriceProvider(PriceProvider):
         stopover_text = ", ".join(dedup_stops) if dedup_stops else None
         return journey, stopover_text
 
+    def _extract_stopover_details(
+        self,
+        lines: list[str],
+    ) -> str | None:
+        details: list[str] = []
+        seen: set[str] = set()
+
+        for line in lines:
+            lower_line = line.lower()
+            if "stop" not in lower_line and " in " not in lower_line:
+                continue
+
+            city_match = re.search(
+                r"\bin\s+([A-Za-z][A-Za-z\s\-']+)",
+                line,
+            )
+            city = city_match.group(1).strip() if city_match else None
+
+            duration_match = re.search(
+                r"\b([0-9]{1,2}h(?:\s*[0-9]{1,2}m)?)\b",
+                line,
+            )
+            duration = duration_match.group(1).replace("  ", " ") if duration_match else None
+
+            time_pair_match = re.search(
+                r"\b([0-2][0-9]:[0-5][0-9])\s*[–-]\s*"
+                r"([0-2][0-9]:[0-5][0-9](?:\+[0-9]+d)?)",
+                line,
+            )
+            time_pair = (
+                f"{time_pair_match.group(1)}-{time_pair_match.group(2)}"
+                if time_pair_match
+                else None
+            )
+
+            if not city and not duration and not time_pair:
+                continue
+
+            parts: list[str] = []
+            if city:
+                parts.append(city)
+            if time_pair:
+                parts.append(f"{time_pair}")
+            if duration:
+                parts.append(f"停留{duration}")
+
+            detail = " ".join(parts).strip()
+            if detail and detail not in seen:
+                seen.add(detail)
+                details.append(detail)
+
+        if not details:
+            return None
+        return "; ".join(details)
+
     def _extract_extended_meta(
         self,
         page_text: str,
@@ -292,6 +347,12 @@ class TripScrapePriceProvider(PriceProvider):
         return_journey, return_stopovers = self._extract_journey_and_stopovers(
             return_section if return_section else lines
         )
+        outbound_stopover_details = self._extract_stopover_details(
+            outbound_section if outbound_section else lines
+        )
+        return_stopover_details = self._extract_stopover_details(
+            return_section if return_section else lines
+        )
 
         flight_number = self._extract_flight_number(page_text, page_html)
 
@@ -305,6 +366,8 @@ class TripScrapePriceProvider(PriceProvider):
             "return_journey": return_journey,
             "outbound_stopovers": outbound_stopovers,
             "return_stopovers": return_stopovers,
+            "outbound_stopover_details": outbound_stopover_details,
+            "return_stopover_details": return_stopover_details,
         }
 
     def _click_first_if_present(

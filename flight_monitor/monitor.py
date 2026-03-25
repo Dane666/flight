@@ -445,6 +445,22 @@ class FlightMonitor:
                             if isinstance(meta.get("return_stopovers"), str)
                             else None
                         ),
+                        "outbound_stopover_details": (
+                            meta.get("outbound_stopover_details")
+                            if isinstance(
+                                meta.get("outbound_stopover_details"),
+                                str,
+                            )
+                            else None
+                        ),
+                        "return_stopover_details": (
+                            meta.get("return_stopover_details")
+                            if isinstance(
+                                meta.get("return_stopover_details"),
+                                str,
+                            )
+                            else None
+                        ),
                         "converted_price": converted_price,
                         "source_price": source_price,
                         "source_currency": source_currency,
@@ -485,6 +501,10 @@ class FlightMonitor:
                 ),
                 f"- 返程路由: {deal_item['return_journey'] or 'N/A'}",
                 f"- 返程中转: {deal_item['return_stopovers'] or 'N/A'}",
+                (
+                    "- 返程中转明细: "
+                    f"{deal_item['return_stopover_details'] or 'N/A'}"
+                ),
                 (
                     "- 价格: "
                     f"{float(deal_item['converted_price']):.2f} "
