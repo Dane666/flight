@@ -30,24 +30,23 @@ jobs:
         run: |
           python -m playwright install chromium
 
-      - name: Ensure config.yaml exists
+      - name: Build config.yaml from secrets
         env:
           MONITOR_CONFIG_YAML: ${{ secrets.MONITOR_CONFIG_YAML }}
+          FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
+          FEISHU_SECRET: ${{ secrets.FEISHU_SECRET }}
         run: |
           if [ -n "$MONITOR_CONFIG_YAML" ]; then
             echo "$MONITOR_CONFIG_YAML" > config.yaml
             echo "Using MONITOR_CONFIG_YAML secret"
-          fi
-
-          if [ ! -f config.yaml ]; then
+          else
             python main.py init-config --force
-            echo "Secret not set, generated default config"
+            echo "MONITOR_CONFIG_YAML not set, generated default config"
           fi
 
-      - name: Validate config format
-        run: |
           python - <<'PYCFG'
 from pathlib import Path
+import os
 import yaml
 
 content = Path('config.yaml').read_text(encoding='utf-8')
@@ -56,7 +55,19 @@ if isinstance(obj, str):
     obj = yaml.safe_load(obj)
 if not isinstance(obj, dict):
     raise SystemExit(f"Invalid config type: {type(obj).__name__}")
-print("config.yaml format is valid")
+
+feishu_webhook = os.getenv("FEISHU_WEBHOOK_URL")
+feishu_secret = os.getenv("FEISHU_SECRET")
+if feishu_webhook:
+    obj["feishu_webhook_url"] = feishu_webhook
+if feishu_secret:
+    obj["feishu_secret"] = feishu_secret
+
+Path('config.yaml').write_text(
+    yaml.safe_dump(obj, allow_unicode=True, sort_keys=False),
+    encoding='utf-8',
+)
+print("config.yaml ready")
 PYCFG
 
       - name: Run summary monitor
