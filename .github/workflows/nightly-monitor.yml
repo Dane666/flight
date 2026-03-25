@@ -2,9 +2,9 @@ name: Nightly Flight Monitor
 
 on:
   schedule:
-    - cron: '0 1 * * 1-5'      # 工作日 09:00 (UTC 1:00 = 北京时间 09:00)
-    - cron: '0 10 * * 1-5'     # 工作日 18:00 (UTC 10:00 = 北京时间 18:00)
-    - cron: '0 2 * * 0,6'      # 周末 10:00 (UTC 2:00 = 北京时间 10:00)
+    - cron: '0 1 * * 1-5'  # 工作日 09:00 (UTC+8)
+    - cron: '0 10 * * 1-5' # 工作日 18:00 (UTC+8)
+    - cron: '0 2 * * 0,6'  # 周末 10:00 (UTC+8)
   workflow_dispatch:
 
 jobs:
@@ -37,38 +37,14 @@ jobs:
           FEISHU_SECRET: ${{ secrets.FEISHU_SECRET }}
         run: |
           if [ -n "$MONITOR_CONFIG_YAML" ]; then
-            echo "$MONITOR_CONFIG_YAML" > config.yaml
+            printf '%s\n' "$MONITOR_CONFIG_YAML" > config.yaml
             echo "Using MONITOR_CONFIG_YAML secret"
           else
             python main.py init-config --force
             echo "MONITOR_CONFIG_YAML not set, generated default config"
           fi
 
-          python - <<'PYCFG'
-from pathlib import Path
-import os
-import yaml
-
-content = Path('config.yaml').read_text(encoding='utf-8')
-obj = yaml.safe_load(content)
-if isinstance(obj, str):
-    obj = yaml.safe_load(obj)
-if not isinstance(obj, dict):
-    raise SystemExit(f"Invalid config type: {type(obj).__name__}")
-
-feishu_webhook = os.getenv("FEISHU_WEBHOOK_URL")
-feishu_secret = os.getenv("FEISHU_SECRET")
-if feishu_webhook:
-    obj["feishu_webhook_url"] = feishu_webhook
-if feishu_secret:
-    obj["feishu_secret"] = feishu_secret
-
-Path('config.yaml').write_text(
-    yaml.safe_dump(obj, allow_unicode=True, sort_keys=False),
-    encoding='utf-8',
-)
-print("config.yaml ready")
-PYCFG
+          python -c "from pathlib import Path; import os, yaml; content = Path('config.yaml').read_text(encoding='utf-8'); obj = yaml.safe_load(content); obj = yaml.safe_load(obj) if isinstance(obj, str) else obj; assert isinstance(obj, dict), f'Invalid config type: {type(obj).__name__}'; fw = os.getenv('FEISHU_WEBHOOK_URL'); fs = os.getenv('FEISHU_SECRET'); obj['feishu_webhook_url'] = fw if fw else obj.get('feishu_webhook_url'); obj['feishu_secret'] = fs if fs else obj.get('feishu_secret'); Path('config.yaml').write_text(yaml.safe_dump(obj, allow_unicode=True, sort_keys=False), encoding='utf-8'); print('config.yaml ready')"
 
       - name: Run summary monitor
         run: |
