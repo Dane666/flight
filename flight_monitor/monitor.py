@@ -53,7 +53,8 @@ class FlightMonitor:
         text = value.strip()
         if not text:
             return True
-        return text.upper() == "N/A"
+        normalized = text.upper()
+        return normalized in {"N/A", "APPROX", "UNKNOWN", "--"}
 
     def _candidate_is_direct(
         self,
@@ -103,6 +104,26 @@ class FlightMonitor:
         if not durations:
             return False
         return max(durations) <= max_hours
+
+    def _candidate_max_layover_hours(
+        self,
+        candidate: dict[str, str | float | None],
+    ) -> float | None:
+        durations = [
+            *self._extract_layover_hours(
+                candidate.get("outbound_stopover_details")
+                if isinstance(candidate.get("outbound_stopover_details"), str)
+                else None
+            ),
+            *self._extract_layover_hours(
+                candidate.get("return_stopover_details")
+                if isinstance(candidate.get("return_stopover_details"), str)
+                else None
+            ),
+        ]
+        if not durations:
+            return None
+        return max(durations)
 
     def _evaluate_price_position(
         self,
@@ -428,6 +449,9 @@ class FlightMonitor:
         depart_date, return_date = self._get_active_date_pair()
         best_item: dict[str, str | float | None] | None = None
         best_direct_item: dict[str, str | float | None] | None = None
+        best_transfer_within_limit: dict[str, str | float | None] | None = None
+        best_transfer_shortest: dict[str, str | float | None] | None = None
+        best_transfer_shortest_score: tuple[float, float] | None = None
 
         provider_set_verbose = getattr(self.provider, "set_verbose", None)
         if callable(provider_set_verbose):
@@ -538,21 +562,35 @@ class FlightMonitor:
                             < float(best_direct_item["converted_price"])
                         ):
                             best_direct_item = candidate
-
-                    if not self._candidate_layover_within_limit(
-                        candidate,
-                        max_hours=3.0,
-                    ):
                         continue
 
+                    max_layover = self._candidate_max_layover_hours(candidate)
+                    if max_layover is not None and max_layover <= 3.0:
+                        if (
+                            best_transfer_within_limit is None
+                            or converted_price
+                            < float(best_transfer_within_limit["converted_price"])
+                        ):
+                            best_transfer_within_limit = candidate
+
+                    layover_score = max_layover if max_layover is not None else 999.0
+                    score = (layover_score, float(converted_price))
                     if (
-                        best_item is None
-                        or converted_price < float(best_item["converted_price"])
+                        best_transfer_shortest_score is None
+                        or score < best_transfer_shortest_score
                     ):
-                        best_item = candidate
+                        best_transfer_shortest_score = score
+                        best_transfer_shortest = candidate
         finally:
             if callable(provider_set_verbose):
                 provider_set_verbose(True)
+
+        if best_direct_item is not None:
+            best_item = best_direct_item
+        elif best_transfer_within_limit is not None:
+            best_item = best_transfer_within_limit
+        else:
+            best_item = best_transfer_shortest
 
         return depart_date, return_date, best_item, best_direct_item
 
