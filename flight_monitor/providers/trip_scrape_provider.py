@@ -156,31 +156,94 @@ class TripScrapePriceProvider(PriceProvider):
         self,
         page_text: str,
         page_html: str,
+        page=None,
     ) -> str | None:
         ignore_context_keywords = {
             "e.g.",
             "example",
             "provide",
             "valid flight number",
+            "for example",
+            "sample",
         }
 
-        candidates: list[str] = []
-        for match in re.finditer(
-            r"\b([A-Z]{2}\s?[0-9]{2,4})\b",
-            page_text,
-        ):
-            value = match.group(1).replace(" ", "")
-            if value == "CZ1235":
-                continue
-            left = max(match.start() - 40, 0)
-            right = min(match.end() + 40, len(page_text))
-            context = page_text[left:right].lower()
-            if any(token in context for token in ignore_context_keywords):
-                continue
-            candidates.append(value)
+        keyword_patterns = [
+            re.compile(
+                r"(?i)\bflight(?:\s*no\.?|\s*number|\s*#)?\s*[:：]?\s*"
+                r"([A-Z0-9]{2}\s*[- ]?\s*[0-9]{2,4}[A-Z]?)\b"
+            ),
+            re.compile(
+                r"航班(?:号|編號|编号)?\s*[:：]?\s*"
+                r"([A-Z0-9]{2}\s*[- ]?\s*[0-9]{2,4}[A-Z]?)"
+            ),
+        ]
+        generic_pattern = re.compile(
+            r"\b([A-Z0-9]{2}\s*[- ]?\s*[0-9]{2,4}[A-Z]?)\b"
+        )
 
-        if candidates:
-            return candidates[0]
+        def normalize(code: str) -> str | None:
+            compact = re.sub(r"[^A-Z0-9]", "", code.upper())
+            if not re.fullmatch(r"[A-Z0-9]{2}[0-9]{2,4}[A-Z]?", compact):
+                return None
+            if compact in {"CZ1235"}:
+                return None
+            if compact[:2].isdigit():
+                return None
+            if compact.startswith(("US", "HK", "CN", "TH", "TW", "SG")):
+                if compact[2:].isdigit() and len(compact) <= 5:
+                    return None
+            return compact
+
+        def collect_from_text(
+            text: str,
+            prioritized: bool,
+        ) -> list[str]:
+            values: list[str] = []
+            patterns = keyword_patterns if prioritized else [generic_pattern]
+            for pattern in patterns:
+                for match in pattern.finditer(text):
+                    raw = match.group(1)
+                    normalized = normalize(raw)
+                    if not normalized:
+                        continue
+                    left = max(match.start() - 60, 0)
+                    right = min(match.end() + 60, len(text))
+                    context = text[left:right].lower()
+                    if any(token in context for token in ignore_context_keywords):
+                        continue
+                    values.append(normalized)
+            return values
+
+        candidates: list[str] = []
+        candidates.extend(collect_from_text(page_text, prioritized=True))
+
+        if page is not None:
+            try:
+                dom_chunks = page.eval_on_selector_all(
+                    "[class*='flight'], [class*='segment'], [class*='airline'], "
+                    "[data-testid*='flight'], [aria-label*='flight']",
+                    "elements => elements.map(e => (e.textContent || '').trim()).filter(Boolean)",
+                )
+                if isinstance(dom_chunks, list) and dom_chunks:
+                    dom_text = "\n".join(
+                        chunk for chunk in dom_chunks if isinstance(chunk, str)
+                    )
+                    candidates.extend(collect_from_text(dom_text, prioritized=True))
+                    candidates.extend(collect_from_text(dom_text, prioritized=False))
+            except Exception:
+                pass
+
+        candidates.extend(collect_from_text(page_html, prioritized=True))
+        candidates.extend(collect_from_text(page_text, prioritized=False))
+        candidates.extend(collect_from_text(page_html, prioritized=False))
+
+        deduped: list[str] = []
+        for code in candidates:
+            if code not in deduped:
+                deduped.append(code)
+
+        if deduped:
+            return deduped[0]
         return None
 
     def _find_section(
@@ -335,6 +398,7 @@ class TripScrapePriceProvider(PriceProvider):
         self,
         page_text: str,
         page_html: str,
+        page=None,
     ) -> dict[str, str | float | None]:
         lines = [line.strip() for line in page_text.splitlines() if line.strip()]
 
@@ -370,7 +434,11 @@ class TripScrapePriceProvider(PriceProvider):
             journey_hint=return_journey,
         )
 
-        flight_number = self._extract_flight_number(page_text, page_html)
+        flight_number = self._extract_flight_number(
+            page_text,
+            page_html,
+            page=page,
+        )
 
         return {
             "depart_time": outbound_depart,
@@ -507,7 +575,7 @@ class TripScrapePriceProvider(PriceProvider):
             if price is None:
                 continue
 
-            extended_meta = self._extract_extended_meta(text, html)
+            extended_meta = self._extract_extended_meta(text, html, page=page)
             if best_price is None:
                 best_price = price
             if best_meta == {} or (
@@ -519,7 +587,11 @@ class TripScrapePriceProvider(PriceProvider):
         if best_price is None:
             best_price = calendar_price
             if best_meta == {}:
-                best_meta = self._extract_extended_meta(initial_text, initial_html)
+                best_meta = self._extract_extended_meta(
+                    initial_text,
+                    initial_html,
+                    page=page,
+                )
 
         return best_price, best_meta
 
