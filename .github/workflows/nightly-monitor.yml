@@ -2,9 +2,9 @@ name: Nightly Flight Monitor
 
 on:
   schedule:
-    - cron: '0 1 * * 1-5'  # 工作日 09:00 (UTC+8)
+    - cron: '0 1 * * 1-5' # 工作日 09:00 (UTC+8)
     - cron: '0 10 * * 1-5' # 工作日 18:00 (UTC+8)
-    - cron: '0 2 * * 0,6'  # 周末 10:00 (UTC+8)
+    - cron: '0 2 * * 0,6' # 周末 10:00 (UTC+8)
   workflow_dispatch:
 
 jobs:
@@ -44,20 +44,48 @@ jobs:
             echo "MONITOR_CONFIG_YAML not set, generated default config"
           fi
 
-            python -c "from pathlib import Path; import os, yaml; content = Path('config.yaml').read_text(encoding='utf-8'); obj = yaml.safe_load(content); obj = yaml.safe_load(obj) if isinstance(obj, str) else obj; assert isinstance(obj, dict), f'Invalid config type: {type(obj).__name__}'; has_full = bool(os.getenv('MONITOR_CONFIG_YAML')); fw = os.getenv('FEISHU_WEBHOOK_URL'); fs = os.getenv('FEISHU_SECRET'); obj['feishu_webhook_url'] = fw if fw else obj.get('feishu_webhook_url'); obj['feishu_secret'] = fs if fs else obj.get('feishu_secret');
-      if not has_full:
-        obj['provider'] = 'trip_scrape';
-        obj['currency'] = obj.get('currency', 'CNY');
-        obj['trip_scrape_timeout_seconds'] = int(obj.get('trip_scrape_timeout_seconds', 60));
-        obj['origins'] = ['CAN', 'SZX', 'HKG'];
-        obj['destination'] = 'PQC';
-        obj['thailand_destinations'] = ['BKK', 'DMK', 'HKT', 'CNX', 'KBV'];
-        obj['window_start'] = obj.get('window_start', '2026-06-18');
-        obj['window_end'] = obj.get('window_end', '2026-06-21');
-        obj['fixed_depart_date'] = obj.get('fixed_depart_date', '2026-06-18');
-        obj['fixed_return_date'] = obj.get('fixed_return_date', '2026-06-21');
-        obj['min_depart_time'] = obj.get('min_depart_time', '12:00');
-      Path('config.yaml').write_text(yaml.safe_dump(obj, allow_unicode=True, sort_keys=False), encoding='utf-8'); print('config.yaml ready, provider=' + str(obj.get('provider')))"
+          python - <<'PYCFG'
+          from pathlib import Path
+          import os
+          import yaml
+
+          content = Path('config.yaml').read_text(encoding='utf-8')
+          obj = yaml.safe_load(content)
+          if isinstance(obj, str):
+              obj = yaml.safe_load(obj)
+          if not isinstance(obj, dict):
+              raise SystemExit(f"Invalid config type: {type(obj).__name__}")
+
+          has_full = bool(os.getenv('MONITOR_CONFIG_YAML'))
+          feishu_webhook = os.getenv('FEISHU_WEBHOOK_URL')
+          feishu_secret = os.getenv('FEISHU_SECRET')
+
+          if feishu_webhook:
+              obj['feishu_webhook_url'] = feishu_webhook
+          if feishu_secret:
+              obj['feishu_secret'] = feishu_secret
+
+          if not has_full:
+              obj['provider'] = 'trip_scrape'
+              obj['currency'] = obj.get('currency', 'CNY')
+              obj['trip_scrape_timeout_seconds'] = int(
+                  obj.get('trip_scrape_timeout_seconds', 60)
+              )
+              obj['origins'] = ['CAN', 'SZX', 'HKG']
+              obj['destination'] = 'PQC'
+              obj['thailand_destinations'] = ['BKK', 'DMK', 'HKT', 'CNX', 'KBV']
+              obj['window_start'] = obj.get('window_start', '2026-06-18')
+              obj['window_end'] = obj.get('window_end', '2026-06-21')
+              obj['fixed_depart_date'] = obj.get('fixed_depart_date', '2026-06-18')
+              obj['fixed_return_date'] = obj.get('fixed_return_date', '2026-06-21')
+              obj['min_depart_time'] = obj.get('min_depart_time', '12:00')
+
+          Path('config.yaml').write_text(
+              yaml.safe_dump(obj, allow_unicode=True, sort_keys=False),
+              encoding='utf-8',
+          )
+          print('config.yaml ready, provider=' + str(obj.get('provider')))
+          PYCFG
 
       - name: Run summary monitor
         run: |
