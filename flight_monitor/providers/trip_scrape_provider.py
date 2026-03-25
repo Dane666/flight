@@ -258,6 +258,8 @@ class TripScrapePriceProvider(PriceProvider):
         for value in stops:
             if value not in dedup_stops:
                 dedup_stops.append(value)
+            if len(dedup_stops) >= 2:
+                break
 
         stopover_text = ", ".join(dedup_stops) if dedup_stops else None
         return journey, stopover_text
@@ -265,13 +267,23 @@ class TripScrapePriceProvider(PriceProvider):
     def _extract_stopover_details(
         self,
         lines: list[str],
+        journey_hint: str | None = None,
     ) -> str | None:
+        time_tokens: list[str] = []
+        if journey_hint:
+            for token in re.findall(r"\b[0-2][0-9]:[0-5][0-9](?:\+[0-9]+d)?\b", journey_hint):
+                if token not in time_tokens:
+                    time_tokens.append(token)
+
         details: list[str] = []
         seen: set[str] = set()
 
         for line in lines:
             lower_line = line.lower()
             if "stop" not in lower_line and " in " not in lower_line:
+                continue
+
+            if time_tokens and not any(token in line for token in time_tokens):
                 continue
 
             city_match = re.search(
@@ -312,6 +324,8 @@ class TripScrapePriceProvider(PriceProvider):
             if detail and detail not in seen:
                 seen.add(detail)
                 details.append(detail)
+                if len(details) >= 2:
+                    break
 
         if not details:
             return None
@@ -348,10 +362,12 @@ class TripScrapePriceProvider(PriceProvider):
             return_section if return_section else lines
         )
         outbound_stopover_details = self._extract_stopover_details(
-            outbound_section if outbound_section else lines
+            outbound_section if outbound_section else lines,
+            journey_hint=outbound_journey,
         )
         return_stopover_details = self._extract_stopover_details(
-            return_section if return_section else lines
+            return_section if return_section else lines,
+            journey_hint=return_journey,
         )
 
         flight_number = self._extract_flight_number(page_text, page_html)
