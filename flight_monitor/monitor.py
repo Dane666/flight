@@ -122,6 +122,16 @@ class FlightMonitor:
         value = candidate.get(key)
         return value if isinstance(value, str) else None
 
+    def _candidate_text_or_none(
+        self,
+        candidate: dict[str, str | float | None],
+        key: str,
+    ) -> str | None:
+        value = self._candidate_text(candidate, key)
+        if self._is_missing_text(value):
+            return None
+        return value
+
     def _format_leg_duration(self, depart: str | None, arrive: str | None) -> str:
         depart_parsed = self._parse_hhmm(depart)
         arrive_parsed = self._parse_hhmm(arrive)
@@ -660,24 +670,43 @@ class FlightMonitor:
             depart_date_value: date,
             return_date_value: date,
         ) -> str:
+            depart_text = self._candidate_text_or_none(deal_item, "depart_time")
+            arrive_text = self._candidate_text_or_none(deal_item, "arrive_time")
+            return_depart_text = self._candidate_text_or_none(
+                deal_item,
+                "return_depart_time",
+            )
+            return_arrive_text = self._candidate_text_or_none(
+                deal_item,
+                "return_arrive_time",
+            )
             base = (
                 f"{prefix} "
                 f"{deal_item['origin']}->{deal_item['destination']} "
                 f"{depart_date_value}/{return_date_value} "
-                f"go={deal_item['depart_time'] or 'N/A'}->{deal_item['arrive_time'] or 'N/A'} "
-                f"back={deal_item['return_depart_time'] or 'N/A'}->{deal_item['return_arrive_time'] or 'N/A'} "
+                f"go={depart_text or '--'}->{arrive_text or '--'} "
+                f"back={return_depart_text or '--'}->{return_arrive_text or '--'} "
                 f"🔥PRICE={float(deal_item['converted_price']):.2f} {self.config.currency}🔥 "
                 f"(src={float(deal_item['source_price']):.2f} {deal_item['source_currency']}, "
                 f"fx={float(deal_item['fx_rate']):.4f})"
             )
             if self._candidate_is_direct(deal_item):
                 return base + " direct=Y"
-            return (
-                base
-                + f" back_route={deal_item['return_journey'] or 'N/A'}"
-                + f" back_stop={deal_item['return_stopovers'] or 'N/A'}"
-                + f" back_stop_detail={deal_item['return_stopover_details'] or 'N/A'}"
+
+            segments = [base]
+            return_journey = self._candidate_text_or_none(deal_item, "return_journey")
+            return_stopovers = self._candidate_text_or_none(deal_item, "return_stopovers")
+            return_stopover_details = self._candidate_text_or_none(
+                deal_item,
+                "return_stopover_details",
             )
+            if return_journey:
+                segments.append(f"back_route={return_journey}")
+            if return_stopovers:
+                segments.append(f"back_stop={return_stopovers}")
+            if return_stopover_details:
+                segments.append(f"back_stop_detail={return_stopover_details}")
+            return " ".join(segments)
 
         def build_feishu_deal_block(
             title: str,
@@ -688,31 +717,60 @@ class FlightMonitor:
                 return [title, "- 状态: 无可用价格"]
 
             is_direct = self._candidate_is_direct(deal_item)
+            depart_text = self._candidate_text_or_none(deal_item, "depart_time")
+            arrive_text = self._candidate_text_or_none(deal_item, "arrive_time")
+            return_depart_text = self._candidate_text_or_none(
+                deal_item,
+                "return_depart_time",
+            )
+            return_arrive_text = self._candidate_text_or_none(
+                deal_item,
+                "return_arrive_time",
+            )
+            flight_number_text = self._candidate_text_or_none(deal_item, "flight_number")
+            outbound_stopovers_text = self._candidate_text_or_none(
+                deal_item,
+                "outbound_stopovers",
+            )
+            outbound_stopover_details_text = self._candidate_text_or_none(
+                deal_item,
+                "outbound_stopover_details",
+            )
+            return_journey_text = self._candidate_text_or_none(deal_item, "return_journey")
+            return_stopovers_text = self._candidate_text_or_none(
+                deal_item,
+                "return_stopovers",
+            )
+            return_stopover_details_text = self._candidate_text_or_none(
+                deal_item,
+                "return_stopover_details",
+            )
+
             go_duration = self._format_leg_duration(
-                self._candidate_text(deal_item, "depart_time"),
-                self._candidate_text(deal_item, "arrive_time"),
+                depart_text,
+                arrive_text,
             )
             back_duration = self._format_leg_duration(
-                self._candidate_text(deal_item, "return_depart_time"),
-                self._candidate_text(deal_item, "return_arrive_time"),
+                return_depart_text,
+                return_arrive_text,
             )
             go_stops = self._count_stops(
-                self._candidate_text(deal_item, "outbound_stopovers"),
-                self._candidate_text(deal_item, "outbound_stopover_details"),
+                outbound_stopovers_text,
+                outbound_stopover_details_text,
             )
             back_stops = self._count_stops(
-                self._candidate_text(deal_item, "return_stopovers"),
-                self._candidate_text(deal_item, "return_stopover_details"),
+                return_stopovers_text,
+                return_stopover_details_text,
             )
             redeye_text = (
                 "是"
                 if self._is_redeye(
-                    self._candidate_text(deal_item, "depart_time"),
-                    self._candidate_text(deal_item, "arrive_time"),
+                    depart_text,
+                    arrive_text,
                 )
                 or self._is_redeye(
-                    self._candidate_text(deal_item, "return_depart_time"),
-                    self._candidate_text(deal_item, "return_arrive_time"),
+                    return_depart_text,
+                    return_arrive_text,
                 )
                 else "否"
             )
@@ -721,20 +779,8 @@ class FlightMonitor:
                 title,
                 f"- 类型: {'直飞' if is_direct else '中转'}",
                 f"- 航线: {deal_item['origin']} -> {deal_item['destination']}",
-                f"- 总时长: 去程 {go_duration} / 返程 {back_duration}",
                 f"- 中转次数: 去程 {go_stops} / 返程 {back_stops}",
                 f"- 红眼航班: {redeye_text}",
-                (
-                    "- 去程: "
-                    f"{deal_item['depart_time'] or 'N/A'} "
-                    f"-> {deal_item['arrive_time'] or 'N/A'}"
-                ),
-                (
-                    "- 返程: "
-                    f"{deal_item['return_depart_time'] or 'N/A'} "
-                    f"-> {deal_item['return_arrive_time'] or 'N/A'}"
-                ),
-                f"- 航司/航班: {deal_item['flight_number'] or 'N/A'}",
                 (
                     "- 价格: "
                     f"{float(deal_item['converted_price']):.2f} "
@@ -747,34 +793,58 @@ class FlightMonitor:
                 "- 退改签: 待下单页确认（抓取页未稳定提供）",
             ]
 
+            if go_duration != "N/A" or back_duration != "N/A":
+                lines.insert(
+                    3,
+                    f"- 总时长: 去程 {go_duration} / 返程 {back_duration}",
+                )
+            if depart_text and arrive_text:
+                lines.insert(6, f"- 去程: {depart_text} -> {arrive_text}")
+            if return_depart_text and return_arrive_text:
+                insert_index = 7 if depart_text and arrive_text else 6
+                lines.insert(insert_index, f"- 返程: {return_depart_text} -> {return_arrive_text}")
+            if flight_number_text:
+                lines.insert(
+                    8 if (depart_text and arrive_text and return_depart_text and return_arrive_text) else 7,
+                    f"- 航司/航班: {flight_number_text}",
+                )
+
             if is_direct:
                 lines.append("- 中转相关: 直飞，无中转")
             else:
-                lines.extend(
-                    [
-                        f"- 去程中转: {deal_item['outbound_stopovers'] or 'N/A'}",
-                        (
-                            "- 去程中转明细: "
-                            f"{deal_item['outbound_stopover_details'] or 'N/A'}"
-                        ),
-                        f"- 返程路由: {deal_item['return_journey'] or 'N/A'}",
-                        f"- 返程中转: {deal_item['return_stopovers'] or 'N/A'}",
-                        (
-                            "- 返程中转明细: "
-                            f"{deal_item['return_stopover_details'] or 'N/A'}"
-                        ),
-                    ]
-                )
+                if outbound_stopovers_text:
+                    lines.append(f"- 去程中转: {outbound_stopovers_text}")
+                if outbound_stopover_details_text:
+                    lines.append(f"- 去程中转明细: {outbound_stopover_details_text}")
+                if return_journey_text:
+                    lines.append(f"- 返程路由: {return_journey_text}")
+                if return_stopovers_text:
+                    lines.append(f"- 返程中转: {return_stopovers_text}")
+                if return_stopover_details_text:
+                    lines.append(f"- 返程中转明细: {return_stopover_details_text}")
                 if direct_item is not None:
+                    direct_depart = self._candidate_text_or_none(direct_item, "depart_time")
+                    direct_arrive = self._candidate_text_or_none(direct_item, "arrive_time")
+                    direct_return_depart = self._candidate_text_or_none(
+                        direct_item,
+                        "return_depart_time",
+                    )
+                    direct_return_arrive = self._candidate_text_or_none(
+                        direct_item,
+                        "return_arrive_time",
+                    )
+                    direct_parts = [
+                        f"{direct_item['origin']}->{direct_item['destination']}",
+                        f"price={float(direct_item['converted_price']):.2f} {self.config.currency}",
+                    ]
+                    if direct_depart and direct_arrive:
+                        direct_parts.insert(1, f"go={direct_depart}->{direct_arrive}")
+                    if direct_return_depart and direct_return_arrive:
+                        direct_parts.insert(2, f"back={direct_return_depart}->{direct_return_arrive}")
                     lines.extend(
                         [
                             "- 备选最优直飞:",
-                            (
-                                f"  {direct_item['origin']}->{direct_item['destination']} "
-                                f"go={direct_item['depart_time'] or 'N/A'}->{direct_item['arrive_time'] or 'N/A'} "
-                                f"back={direct_item['return_depart_time'] or 'N/A'}->{direct_item['return_arrive_time'] or 'N/A'} "
-                                f"price={float(direct_item['converted_price']):.2f} {self.config.currency}"
-                            ),
+                            "  " + " ".join(direct_parts),
                         ]
                     )
 
