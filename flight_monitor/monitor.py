@@ -727,7 +727,10 @@ class FlightMonitor:
                 deal_item,
                 "return_arrive_time",
             )
-            flight_number_text = self._candidate_text_or_none(deal_item, "flight_number")
+            flight_number_text = self._candidate_text_or_none(
+                deal_item,
+                "flight_number",
+            )
             outbound_stopovers_text = self._candidate_text_or_none(
                 deal_item,
                 "outbound_stopovers",
@@ -736,7 +739,10 @@ class FlightMonitor:
                 deal_item,
                 "outbound_stopover_details",
             )
-            return_journey_text = self._candidate_text_or_none(deal_item, "return_journey")
+            return_journey_text = self._candidate_text_or_none(
+                deal_item,
+                "return_journey",
+            )
             return_stopovers_text = self._candidate_text_or_none(
                 deal_item,
                 "return_stopovers",
@@ -779,8 +785,6 @@ class FlightMonitor:
                 title,
                 f"- 类型: {'直飞' if is_direct else '中转'}",
                 f"- 航线: {deal_item['origin']} -> {deal_item['destination']}",
-                f"- 中转次数: 去程 {go_stops} / 返程 {back_stops}",
-                f"- 红眼航班: {redeye_text}",
                 (
                     "- 价格: "
                     f"{float(deal_item['converted_price']):.2f} "
@@ -789,64 +793,74 @@ class FlightMonitor:
                     f"{deal_item['source_currency']}, "
                     f"汇率 {float(deal_item['fx_rate']):.4f})"
                 ),
+                f"- 中转次数: 去程 {go_stops} / 返程 {back_stops}",
+                f"- 红眼航班: {redeye_text}",
                 "- 行李规则: 待下单页确认（抓取页未稳定提供）",
                 "- 退改签: 待下单页确认（抓取页未稳定提供）",
             ]
 
             if go_duration != "N/A" or back_duration != "N/A":
-                lines.insert(
-                    3,
-                    f"- 总时长: 去程 {go_duration} / 返程 {back_duration}",
-                )
-            if depart_text and arrive_text:
-                lines.insert(6, f"- 去程: {depart_text} -> {arrive_text}")
-            if return_depart_text and return_arrive_text:
-                insert_index = 7 if depart_text and arrive_text else 6
-                lines.insert(insert_index, f"- 返程: {return_depart_text} -> {return_arrive_text}")
-            if flight_number_text:
-                lines.insert(
-                    8 if (depart_text and arrive_text and return_depart_text and return_arrive_text) else 7,
-                    f"- 航司/航班: {flight_number_text}",
-                )
+                lines.append(f"- 总时长: 去程 {go_duration} / 返程 {back_duration}")
 
+            if flight_number_text:
+                lines.append(f"- 航司/航班: {flight_number_text}")
+
+            if depart_text and arrive_text:
+                lines.append(f"- 去程: {depart_text} -> {arrive_text}")
             if is_direct:
-                lines.append("- 中转相关: 直飞，无中转")
+                lines.append("- 去程中转: 无中转")
             else:
                 if outbound_stopovers_text:
                     lines.append(f"- 去程中转: {outbound_stopovers_text}")
                 if outbound_stopover_details_text:
                     lines.append(f"- 去程中转明细: {outbound_stopover_details_text}")
-                if return_journey_text:
-                    lines.append(f"- 返程路由: {return_journey_text}")
+
+            if return_depart_text and return_arrive_text:
+                lines.append(f"- 返程: {return_depart_text} -> {return_arrive_text}")
+            if is_direct:
+                lines.append("- 返程中转: 无中转")
+            else:
                 if return_stopovers_text:
                     lines.append(f"- 返程中转: {return_stopovers_text}")
                 if return_stopover_details_text:
                     lines.append(f"- 返程中转明细: {return_stopover_details_text}")
-                if direct_item is not None:
-                    direct_depart = self._candidate_text_or_none(direct_item, "depart_time")
-                    direct_arrive = self._candidate_text_or_none(direct_item, "arrive_time")
-                    direct_return_depart = self._candidate_text_or_none(
-                        direct_item,
-                        "return_depart_time",
+                if return_journey_text:
+                    lines.append(f"- 返程路线: {return_journey_text}")
+
+            if not is_direct and direct_item is not None:
+                direct_depart = self._candidate_text_or_none(
+                    direct_item,
+                    "depart_time",
+                )
+                direct_arrive = self._candidate_text_or_none(
+                    direct_item,
+                    "arrive_time",
+                )
+                direct_return_depart = self._candidate_text_or_none(
+                    direct_item,
+                    "return_depart_time",
+                )
+                direct_return_arrive = self._candidate_text_or_none(
+                    direct_item,
+                    "return_arrive_time",
+                )
+                direct_parts = [
+                    f"{direct_item['origin']}->{direct_item['destination']}",
+                    f"price={float(direct_item['converted_price']):.2f} {self.config.currency}",
+                ]
+                if direct_depart and direct_arrive:
+                    direct_parts.insert(1, f"go={direct_depart}->{direct_arrive}")
+                if direct_return_depart and direct_return_arrive:
+                    direct_parts.insert(
+                        2,
+                        f"back={direct_return_depart}->{direct_return_arrive}",
                     )
-                    direct_return_arrive = self._candidate_text_or_none(
-                        direct_item,
-                        "return_arrive_time",
-                    )
-                    direct_parts = [
-                        f"{direct_item['origin']}->{direct_item['destination']}",
-                        f"price={float(direct_item['converted_price']):.2f} {self.config.currency}",
+                lines.extend(
+                    [
+                        "- 备选最优直飞:",
+                        "  " + " ".join(direct_parts),
                     ]
-                    if direct_depart and direct_arrive:
-                        direct_parts.insert(1, f"go={direct_depart}->{direct_arrive}")
-                    if direct_return_depart and direct_return_arrive:
-                        direct_parts.insert(2, f"back={direct_return_depart}->{direct_return_arrive}")
-                    lines.extend(
-                        [
-                            "- 备选最优直飞:",
-                            "  " + " ".join(direct_parts),
-                        ]
-                    )
+                )
 
             return lines
 
