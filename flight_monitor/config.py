@@ -38,6 +38,7 @@ class AppConfig:
     fixed_depart_date: date | None
     fixed_return_date: date | None
     min_depart_time: str | None
+    min_trip_days: int
 
 
 def create_default_config(year: int | None = None) -> AppConfig:
@@ -74,6 +75,7 @@ def create_default_config(year: int | None = None) -> AppConfig:
         fixed_depart_date=None,
         fixed_return_date=None,
         min_depart_time=None,
+        min_trip_days=3,
     )
 
 
@@ -137,6 +139,7 @@ def load_config(config_path: Path) -> AppConfig:
             else None
         ),
         min_depart_time=payload.get("min_depart_time"),
+        min_trip_days=int(payload.get("min_trip_days", 3)),
     )
 
 
@@ -180,6 +183,7 @@ def save_config(config: AppConfig, output_path: Path) -> None:
             else None
         ),
         "min_depart_time": config.min_depart_time,
+        "min_trip_days": config.min_trip_days,
     }
     with output_path.open("w", encoding="utf-8") as file:
         yaml.safe_dump(payload, file, allow_unicode=True, sort_keys=False)

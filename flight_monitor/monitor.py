@@ -15,7 +15,7 @@ from flight_monitor.providers.base import PriceProvider
 from flight_monitor.storage import PriceStorage
 
 
-def build_roundtrip_pairs(window_start: date, window_end: date) -> list[tuple[date, date]]:
+def build_roundtrip_pairs(window_start: date, window_end: date, min_trip_days: int = 3) -> list[tuple[date, date]]:
     if window_end <= window_start:
         raise ValueError("window_end 必须晚于 window_start")
 
@@ -28,7 +28,8 @@ def build_roundtrip_pairs(window_start: date, window_end: date) -> list[tuple[da
     pairs: list[tuple[date, date]] = []
     for depart_day in all_days:
         for return_day in all_days:
-            if return_day > depart_day:
+            trip_days = (return_day - depart_day).days
+            if trip_days >= min_trip_days:
                 pairs.append((depart_day, return_day))
     return pairs
 
@@ -234,6 +235,7 @@ class FlightMonitor:
         pairs = build_roundtrip_pairs(
             window_start=self.config.window_start,
             window_end=self.config.window_end,
+            min_trip_days=self.config.min_trip_days,
         )
         if not pairs:
             raise ValueError("没有可用的去返日期组合")
@@ -254,6 +256,7 @@ class FlightMonitor:
             pairs = build_roundtrip_pairs(
                 window_start=self.config.window_start,
                 window_end=self.config.window_end,
+                min_trip_days=self.config.min_trip_days,
             )
         if quick:
             pairs = pairs[:1]
