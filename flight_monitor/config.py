@@ -44,7 +44,7 @@ class AppConfig:
 def create_default_config(year: int | None = None) -> AppConfig:
     monitor_year = year or date.today().year
     dragon_boat = dragon_boat_date(monitor_year)
-    start, end = around_day_window(dragon_boat, days=1)
+    start, end = around_day_window(dragon_boat, days=5)
     return AppConfig(
         provider="mock",
         kiwi_api_key=None,
