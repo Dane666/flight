@@ -78,6 +78,8 @@ python main.py run-thailand-cheapest --config config.yaml
 - `window_start` / `window_end`: 往返日期窗口（系统会生成 `去程 < 返程` 的组合）
 - `min_trip_days`: 最小行程天数（默认 4，避免默认出现 3 天往返）
 - `window_start` / `window_end` 与 `min_trip_days` 只是基础约束；系统还会额外要求往返日期完整覆盖端午假期
+- `max_trip_span_days`: 去返总跨度上限（默认 6 天，含端午假期）
+- `max_leave_workdays`: 除端午假期外允许请假的工作日上限（默认 3 天）
 - `notifier`: `console` / `email` / `feishu`
 - `smtp_host`/`smtp_port`/`smtp_username`/`smtp_password`/`smtp_use_tls`: 邮件配置
 - `email_from`/`email_to`: 发件人与收件人列表
