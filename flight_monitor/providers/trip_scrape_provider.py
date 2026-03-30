@@ -1,3 +1,4 @@
+import atexit
 import re
 import time
 from datetime import date
@@ -10,6 +11,11 @@ from flight_monitor.providers.base import PriceProvider
 class TripScrapePriceProvider(PriceProvider):
     name = "trip_scrape"
     quote_currency = "USD"
+    mobile_user_agent = (
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) "
+        "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 "
+        "Mobile/15E148 Safari/604.1"
+    )
 
     city_slug_by_iata = {
         "CAN": "guangzhou",
@@ -17,6 +23,15 @@ class TripScrapePriceProvider(PriceProvider):
         "HKG": "hong-kong",
         "PQC": "phu-quoc-island",
     }
+    stopover_ignore_phrases = (
+        "save money",
+        "registering",
+        "sign in",
+        "log in",
+        "price alert",
+        "member",
+        "discount",
+    )
 
     def __init__(
         self,
@@ -30,13 +45,77 @@ class TripScrapePriceProvider(PriceProvider):
         self._max_retries = max_retries
         self._last_quote_meta: dict[str, str | float | None] = {}
         self._verbose = verbose
+        self._playwright = None
+        self._browser = None
+        self._context = None
+        self._cleanup_registered = False
+        self._fast_scan_mode = False
 
     def set_verbose(self, verbose: bool) -> None:
         self._verbose = verbose
 
+    def set_fast_scan_mode(self, enabled: bool) -> None:
+        self._fast_scan_mode = enabled
+
     def _log(self, text: str) -> None:
         if self._verbose:
             print(text, flush=True)
+
+    def _cleanup_browser(self) -> None:
+        context = self._context
+        browser = self._browser
+        playwright = self._playwright
+        self._context = None
+        self._browser = None
+        self._playwright = None
+
+        if context is not None:
+            try:
+                context.close()
+            except Exception:
+                pass
+        if browser is not None:
+            try:
+                browser.close()
+            except Exception:
+                pass
+        if playwright is not None:
+            try:
+                playwright.stop()
+            except Exception:
+                pass
+
+    def _ensure_context(self):
+        if self._context is not None:
+            return self._context
+
+        self._playwright = sync_playwright().start()
+        self._browser = self._playwright.chromium.launch(headless=True)
+        self._context = self._browser.new_context(
+            user_agent=self.mobile_user_agent,
+            locale="en-US",
+            viewport={"width": 430, "height": 932},
+            screen={"width": 430, "height": 932},
+            is_mobile=True,
+            has_touch=True,
+            device_scale_factor=3,
+        )
+        self._context.set_extra_http_headers(
+            {
+                "Accept-Language": "en-US,en;q=0.9,zh-CN;q=0.8",
+                "Upgrade-Insecure-Requests": "1",
+            }
+        )
+        self._context.route(
+            "**/*",
+            lambda route: route.abort()
+            if route.request.resource_type in {"image", "media", "font"}
+            else route.continue_(),
+        )
+        if not self._cleanup_registered:
+            atexit.register(self._cleanup_browser)
+            self._cleanup_registered = True
+        return self._context
 
     def _build_trip_url(
         self,
@@ -75,6 +154,22 @@ class TripScrapePriceProvider(PriceProvider):
         if not match:
             return None
         return float(match.group(1).replace(",", ""))
+
+    def _extract_price_token_values(self, text: str) -> list[float]:
+        matches = re.findall(
+            r"(?:US\$|\$|¥|￥|CNY\s?)\s?([0-9][0-9,]{1,6})",
+            text,
+        )
+        prices = [
+            float(value.replace(",", ""))
+            for value in matches
+            if 40 <= float(value.replace(",", "")) <= 100000
+        ]
+        deduped: list[float] = []
+        for price in prices:
+            if price not in deduped:
+                deduped.append(price)
+        return deduped
 
     def _extract_roundtrip_calendar_price(
         self,
@@ -118,11 +213,38 @@ class TripScrapePriceProvider(PriceProvider):
         if start_idx is None:
             return None
 
+        prices: list[float] = []
         for probe in range(start_idx, min(len(lines), start_idx + 80)):
-            price = self._extract_price_token_value(lines[probe])
-            if price is not None:
-                return price
-        return None
+            prices.extend(self._extract_price_token_values(lines[probe]))
+        if not prices:
+            return None
+        return min(prices)
+
+    def _extract_dom_lowest_price(self, page) -> float | None:
+        selectors = [
+            "[class*='price']",
+            "[data-testid*='price']",
+            "[class*='fare']",
+            "[class*='money']",
+        ]
+        candidates: list[float] = []
+        for selector in selectors:
+            try:
+                chunks = page.eval_on_selector_all(
+                    selector,
+                    "elements => elements.map(e => (e.textContent || '').trim()).filter(Boolean)",
+                )
+            except Exception:
+                continue
+            if not isinstance(chunks, list):
+                continue
+            for chunk in chunks:
+                if not isinstance(chunk, str):
+                    continue
+                candidates.extend(self._extract_price_token_values(chunk))
+        if not candidates:
+            return None
+        return min(candidates)
 
     def _extract_times(self, page_text: str) -> tuple[str | None, str | None]:
         pairs = re.findall(
@@ -310,12 +432,25 @@ class TripScrapePriceProvider(PriceProvider):
         for line in lines:
             if " – " in line and journey is None and "Flights" not in line:
                 journey = line
+            lower_line = line.lower()
+            if not any(
+                token in lower_line
+                for token in ("stop", "layover", "transfer", "中转", "经停")
+            ):
+                continue
             stop_match = re.search(
                 r"\bin\s+([A-Za-z][A-Za-z\s\-']+)",
                 line,
             )
             if stop_match:
-                stops.append(stop_match.group(1).strip())
+                city = stop_match.group(1).strip()
+                city_lower = city.lower()
+                if any(
+                    phrase in city_lower
+                    for phrase in self.stopover_ignore_phrases
+                ):
+                    continue
+                stops.append(city)
 
         dedup_stops: list[str] = []
         for value in stops:
@@ -343,7 +478,10 @@ class TripScrapePriceProvider(PriceProvider):
 
         for line in lines:
             lower_line = line.lower()
-            if "stop" not in lower_line and " in " not in lower_line:
+            if not any(
+                token in lower_line
+                for token in ("stop", "layover", "transfer", "中转", "经停")
+            ):
                 continue
 
             if time_tokens and not any(token in line for token in time_tokens):
@@ -354,6 +492,11 @@ class TripScrapePriceProvider(PriceProvider):
                 line,
             )
             city = city_match.group(1).strip() if city_match else None
+            if city and any(
+                phrase in city.lower()
+                for phrase in self.stopover_ignore_phrases
+            ):
+                city = None
 
             duration_match = re.search(
                 r"\b([0-9]{1,2}h(?:\s*[0-9]{1,2}m)?)\b",
@@ -516,6 +659,26 @@ class TripScrapePriceProvider(PriceProvider):
         except Exception:
             return
 
+    def _wait_for_search_results(self, page) -> None:
+        deadline = time.monotonic() + (self._render_wait_ms / 1000)
+        while time.monotonic() < deadline:
+            try:
+                body_text = page.inner_text("body")
+            except Exception:
+                page.wait_for_timeout(700)
+                continue
+
+            lower_text = body_text.lower()
+            if (
+                re.search(r"(?:US\$|\$|¥|￥|CNY\s?)\s?[0-9][0-9,]{1,6}", body_text)
+                or "select" in lower_text
+                or "included" in lower_text
+                or "view details" in lower_text
+                or "flight details" in lower_text
+            ):
+                return
+            page.wait_for_timeout(700)
+
     def _extract_from_loaded_page(
         self,
         page,
@@ -531,54 +694,67 @@ class TripScrapePriceProvider(PriceProvider):
             return_date=return_date,
         )
 
-        if self._click_first_if_present(page, "Select", delay_ms=3500):
-            text, html = self._collect_page_snapshot(page)
-            snapshots.append((text, html, "selected"))
-
-            if self._click_nth_if_present(page, "Select", index=1, delay_ms=3500):
+        if not self._fast_scan_mode:
+            if self._click_first_if_present(page, "Select", delay_ms=3500):
                 text, html = self._collect_page_snapshot(page)
                 snapshots.append((text, html, "selected"))
 
-            if self._click_first_if_present(
-                page,
-                "Change Flight",
-                delay_ms=2500,
-            ):
-                text, html = self._collect_page_snapshot(page)
-                snapshots.append((text, html, "selected"))
+                if self._click_nth_if_present(page, "Select", index=1, delay_ms=3500):
+                    text, html = self._collect_page_snapshot(page)
+                    snapshots.append((text, html, "selected"))
+
+                if self._click_first_if_present(
+                    page,
+                    "Change Flight",
+                    delay_ms=2500,
+                ):
+                    text, html = self._collect_page_snapshot(page)
+                    snapshots.append((text, html, "selected"))
 
         self._auto_scroll_to_load(page)
         text, html = self._collect_page_snapshot(page)
         snapshots.append((text, html, "scrolled"))
 
-        for step_text in (
-            "Included",
-            "Change Flight",
-            "View details",
-            "Details",
-            "Flight details",
-        ):
-            if self._click_first_if_present(page, step_text, delay_ms=1800):
-                text, html = self._collect_page_snapshot(page)
-                snapshots.append((text, html, "selected"))
+        if not self._fast_scan_mode:
+            for step_text in (
+                "Included",
+                "Change Flight",
+                "View details",
+                "Details",
+                "Flight details",
+            ):
+                if self._click_first_if_present(page, step_text, delay_ms=1800):
+                    text, html = self._collect_page_snapshot(page)
+                    snapshots.append((text, html, "selected"))
 
         best_price: float | None = None
         best_meta: dict[str, str | float | None] = {}
 
         for text, html, phase in snapshots:
+            phase_prices: list[float] = []
             if phase in {"selected", "scrolled"}:
                 price = self._extract_result_list_price(text)
                 if price is None:
                     price = self._extract_min_price(text)
-            else:
-                price = None
-            if price is None:
+                if price is not None:
+                    phase_prices.append(price)
+                dom_price = self._extract_dom_lowest_price(page)
+                if dom_price is not None:
+                    phase_prices.append(dom_price)
+            if not phase_prices:
+                continue
+            price = min(phase_prices)
+
+            if self._fast_scan_mode:
+                if best_price is None or price < best_price:
+                    best_price = price
                 continue
 
             extended_meta = self._extract_extended_meta(text, html, page=page)
-            if best_price is None:
+            if best_price is None or price < best_price:
                 best_price = price
-            if best_meta == {} or (
+                best_meta = extended_meta
+            elif best_meta == {} or (
                 not best_meta.get("return_depart_time")
                 and extended_meta.get("return_depart_time")
             ):
@@ -621,28 +797,28 @@ class TripScrapePriceProvider(PriceProvider):
                 f"attempt={attempt}/{self._max_retries}",
             )
             try:
-                with sync_playwright() as playwright:
-                    browser = playwright.chromium.launch(headless=True)
-                    page = browser.new_page(
-                        user_agent=(
-                            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                            "AppleWebKit/537.36 (KHTML, like Gecko) "
-                            "Chrome/122.0.0.0 Safari/537.36"
-                        )
-                    )
+                context = self._ensure_context()
+                page = context.new_page()
+                page.set_default_timeout(self._timeout_seconds * 1000)
+                try:
                     page.goto(
                         url,
                         wait_until="domcontentloaded",
                         timeout=self._timeout_seconds * 1000,
                     )
-                    page.wait_for_timeout(self._render_wait_ms)
+                    self._wait_for_search_results(page)
                     price, meta = self._extract_from_loaded_page(
                         page,
                         depart_date=depart_date,
                         return_date=return_date,
                     )
-                    browser.close()
+                finally:
+                    try:
+                        page.close()
+                    except Exception:
+                        pass
             except Exception as error:
+                self._cleanup_browser()
                 self._log(
                     "[WARN] Trip 抓取失败 "
                     f"{origin}->{destination} {depart_date}/{return_date} "

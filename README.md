@@ -4,7 +4,7 @@
 
 - 出发地：广州(CAN)、深圳(SZX)、香港(HKG)
 - 目的地：越南富国岛(PQC)
-- 日期窗口：自动取当前年份端午节前后 1 天
+- 日期窗口：自动取当前年份端午节前后 5 天
 
 > 当前版本支持 `trip_scrape` 网页抓取（无需 API Key）、`mock` 演示数据、以及可选 `kiwi` / `amadeus`。
 
@@ -47,13 +47,15 @@ python main.py run --config config.yaml
 
 默认每 30 分钟运行一次，可在 `config.yaml` 中调整。
 
-## 5) 检索同日期泰国最低价
+## 5) 检索泰国最低价（按窗口匹配）
 
 ```bash
 python main.py run-thailand-cheapest --config config.yaml
 ```
 
-会基于同一去返日期，扫描 CAN/SZX/HKG 到泰国目的地列表并输出最低价。
+会基于日期窗口内的去返组合，扫描 CAN/SZX/HKG 到泰国目的地列表并输出最低价。
+若配置了 `fixed_depart_date/fixed_return_date`，会自动扩展到该日期段前后约 5 天后再匹配。
+系统会优先保留“完整覆盖端午假期”的往返组合：可以提前去、延后回，但不会返回未覆盖端午假期的票。
 
 ## 6) GitHub Actions 定时运行
 
@@ -74,6 +76,8 @@ python main.py run-thailand-cheapest --config config.yaml
 - `alert_threshold`: 触发告警的价格上限
 - `alert_cooldown_minutes`: 同一航线+日期组合告警冷却时间
 - `window_start` / `window_end`: 往返日期窗口（系统会生成 `去程 < 返程` 的组合）
+- `min_trip_days`: 最小行程天数（默认 4，避免默认出现 3 天往返）
+- `window_start` / `window_end` 与 `min_trip_days` 只是基础约束；系统还会额外要求往返日期完整覆盖端午假期
 - `notifier`: `console` / `email` / `feishu`
 - `smtp_host`/`smtp_port`/`smtp_username`/`smtp_password`/`smtp_use_tls`: 邮件配置
 - `email_from`/`email_to`: 发件人与收件人列表
@@ -114,6 +118,12 @@ notifier: console
 该模式使用 Playwright 抓取 Trip.com 页面并在控制台输出真实报价。
 Trip 抓取原始价格通常为 `USD`，程序会自动按实时汇率换算到你在 `config.yaml` 的 `currency`（例如 `CNY`）。
 控制台会输出：起飞时间、到达时间、航班号（若源站未暴露则为 `N/A`）、换算后价格、历史位置（高位/中位/低位）。
+当前 `trip_scrape` 采用“两阶段抓取”：
+
+- 第一阶段：快速扫价格，只做轻量页面解析，尽量缩短全窗口遍历时间
+- 第二阶段：只对最终最低价候选补抓详情（时刻、航班号、中转信息）
+
+因此全窗口真实抓取仍会比 `mock` 慢很多，但已经比“所有组合都抓详情”更适合日常使用。
 
 如果被反爬导致抓取失败，可临时回退：
 
@@ -150,4 +160,4 @@ feishu_secret: null
 说明：
 
 - `feishu_secret` 仅在机器人启用了“签名校验”时填写；否则保持 `null`。
-- `run-best-deals-summary` 会在控制台输出两条最低价后，自动将同样汇总推送到飞书。
+- `run-best-deals-summary` 会按 PQC 与泰国各自独立的最优去返日期输出最低价，并自动将汇总推送到飞书。

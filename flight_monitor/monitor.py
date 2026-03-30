@@ -3,6 +3,7 @@ from datetime import date, datetime, timedelta
 import re
 
 from flight_monitor.config import AppConfig
+from flight_monitor.date_utils import dragon_boat_holiday_span
 from flight_monitor.fx import FxConverter
 from flight_monitor.models import PriceQuote, Route
 from flight_monitor.notifier import (
@@ -15,7 +16,13 @@ from flight_monitor.providers.base import PriceProvider
 from flight_monitor.storage import PriceStorage
 
 
-def build_roundtrip_pairs(window_start: date, window_end: date, min_trip_days: int = 3) -> list[tuple[date, date]]:
+def build_roundtrip_pairs(
+    window_start: date,
+    window_end: date,
+    min_trip_days: int = 4,
+    required_coverage_start: date | None = None,
+    required_coverage_end: date | None = None,
+) -> list[tuple[date, date]]:
     if window_end <= window_start:
         raise ValueError("window_end 必须晚于 window_start")
 
@@ -29,8 +36,13 @@ def build_roundtrip_pairs(window_start: date, window_end: date, min_trip_days: i
     for depart_day in all_days:
         for return_day in all_days:
             trip_days = (return_day - depart_day).days
-            if trip_days >= min_trip_days:
-                pairs.append((depart_day, return_day))
+            if trip_days < min_trip_days:
+                continue
+            if required_coverage_start and depart_day > required_coverage_start:
+                continue
+            if required_coverage_end and return_day < required_coverage_end:
+                continue
+            pairs.append((depart_day, return_day))
     return pairs
 
 
@@ -47,6 +59,14 @@ class FlightMonitor:
         self.storage = storage
         self.notifier = notifier
         self.fx_converter = FxConverter()
+
+    def _warn_if_mock_provider(self, context: str) -> None:
+        if self.provider.name != "mock":
+            return
+        print(
+            f"[{context}] 当前 provider=mock，输出的是演示数据，不是网页实时票价",
+            flush=True,
+        )
 
     def _is_missing_text(self, value: str | None) -> bool:
         if value is None:
@@ -190,6 +210,132 @@ class FlightMonitor:
             return None
         return max(durations)
 
+    def _is_candidate_better_pricewise(
+        self,
+        candidate: dict[str, str | float | None],
+        incumbent: dict[str, str | float | None] | None,
+    ) -> bool:
+        if incumbent is None:
+            return True
+
+        candidate_price = float(candidate["converted_price"])
+        incumbent_price = float(incumbent["converted_price"])
+        if candidate_price != incumbent_price:
+            return candidate_price < incumbent_price
+
+        return int(candidate["trip_days"]) > int(incumbent["trip_days"])
+
+    def _enrich_candidate_details(
+        self,
+        candidate: dict[str, str | float | None] | None,
+    ) -> dict[str, str | float | None] | None:
+        if candidate is None:
+            return None
+
+        provider_set_fast_scan_mode = getattr(
+            self.provider,
+            "set_fast_scan_mode",
+            None,
+        )
+        if callable(provider_set_fast_scan_mode):
+            provider_set_fast_scan_mode(False)
+
+        try:
+            depart_date = date.fromisoformat(str(candidate["depart_date"]))
+            return_date = date.fromisoformat(str(candidate["return_date"]))
+            source_price = self.provider.get_roundtrip_price(
+                origin=str(candidate["origin"]),
+                destination=str(candidate["destination"]),
+                depart_date=depart_date,
+                return_date=return_date,
+                currency=self.config.currency,
+            )
+            if source_price is None:
+                return candidate
+
+            source_currency = (
+                getattr(self.provider, "quote_currency", None)
+                or self.config.currency
+            )
+            converted_price = source_price
+            fx_rate = 1.0
+            if source_currency != self.config.currency:
+                converted_price, fx_rate = self.fx_converter.convert(
+                    amount=source_price,
+                    base=source_currency,
+                    target=self.config.currency,
+                )
+
+            meta = self.provider.get_last_quote_meta()
+            enriched = dict(candidate)
+            enriched.update(
+                {
+                    "depart_time": (
+                        meta.get("depart_time")
+                        if isinstance(meta.get("depart_time"), str)
+                        else None
+                    ),
+                    "arrive_time": (
+                        meta.get("arrive_time")
+                        if isinstance(meta.get("arrive_time"), str)
+                        else None
+                    ),
+                    "return_depart_time": (
+                        meta.get("return_depart_time")
+                        if isinstance(meta.get("return_depart_time"), str)
+                        else None
+                    ),
+                    "return_arrive_time": (
+                        meta.get("return_arrive_time")
+                        if isinstance(meta.get("return_arrive_time"), str)
+                        else None
+                    ),
+                    "outbound_journey": (
+                        meta.get("outbound_journey")
+                        if isinstance(meta.get("outbound_journey"), str)
+                        else None
+                    ),
+                    "return_journey": (
+                        meta.get("return_journey")
+                        if isinstance(meta.get("return_journey"), str)
+                        else None
+                    ),
+                    "outbound_stopovers": (
+                        meta.get("outbound_stopovers")
+                        if isinstance(meta.get("outbound_stopovers"), str)
+                        else None
+                    ),
+                    "return_stopovers": (
+                        meta.get("return_stopovers")
+                        if isinstance(meta.get("return_stopovers"), str)
+                        else None
+                    ),
+                    "outbound_stopover_details": (
+                        meta.get("outbound_stopover_details")
+                        if isinstance(meta.get("outbound_stopover_details"), str)
+                        else None
+                    ),
+                    "return_stopover_details": (
+                        meta.get("return_stopover_details")
+                        if isinstance(meta.get("return_stopover_details"), str)
+                        else None
+                    ),
+                    "flight_number": (
+                        meta.get("flight_number")
+                        if isinstance(meta.get("flight_number"), str)
+                        else None
+                    ),
+                    "source_price": source_price,
+                    "source_currency": source_currency,
+                    "converted_price": converted_price,
+                    "fx_rate": fx_rate,
+                }
+            )
+            return enriched
+        finally:
+            if callable(provider_set_fast_scan_mode):
+                provider_set_fast_scan_mode(True)
+
     def _evaluate_price_position(
         self,
         current_price: float,
@@ -229,20 +375,42 @@ class FlightMonitor:
             return True
         return depart_dt >= min_dt
 
-    def _get_active_date_pair(self) -> tuple[date, date]:
+    def _get_scan_date_pairs(self) -> list[tuple[date, date]]:
         if self.config.fixed_depart_date and self.config.fixed_return_date:
-            return self.config.fixed_depart_date, self.config.fixed_return_date
+            # 指定固定日期时，汇总/最低价任务自动扩窗到前后 5 天再匹配，
+            # 避免仅锁定单一日期导致错过更优往返组合。
+            window_start = self.config.fixed_depart_date - timedelta(days=5)
+            window_end = self.config.fixed_return_date + timedelta(days=5)
+        else:
+            window_start = self.config.window_start
+            window_end = self.config.window_end
+
+        holiday_start, holiday_end = dragon_boat_holiday_span(window_start.year)
+
         pairs = build_roundtrip_pairs(
-            window_start=self.config.window_start,
-            window_end=self.config.window_end,
+            window_start=window_start,
+            window_end=window_end,
             min_trip_days=self.config.min_trip_days,
+            required_coverage_start=holiday_start,
+            required_coverage_end=holiday_end,
         )
-        if not pairs:
-            raise ValueError("没有可用的去返日期组合")
-        return pairs[0]
+        if pairs:
+            return pairs
+
+        if self.config.fixed_depart_date and self.config.fixed_return_date:
+            fixed_depart_date = self.config.fixed_depart_date
+            fixed_return_date = self.config.fixed_return_date
+            if fixed_return_date > fixed_depart_date:
+                return [(fixed_depart_date, fixed_return_date)]
+
+        raise ValueError("没有可用的去返日期组合")
+
+    def _get_required_holiday_span(self) -> tuple[date, date]:
+        return dragon_boat_holiday_span(self.config.window_start.year)
 
     def run_once(self, quick: bool = False) -> None:
         print("[RUN] 开始执行 run-once", flush=True)
+        self._warn_if_mock_provider("RUN")
         if self.config.fixed_depart_date and self.config.fixed_return_date:
             pairs = [
                 (self.config.fixed_depart_date, self.config.fixed_return_date)
@@ -253,11 +421,7 @@ class FlightMonitor:
                 flush=True,
             )
         else:
-            pairs = build_roundtrip_pairs(
-                window_start=self.config.window_start,
-                window_end=self.config.window_end,
-                min_trip_days=self.config.min_trip_days,
-            )
+            pairs = self._get_scan_date_pairs()
         if quick:
             pairs = pairs[:1]
             print(
@@ -395,97 +559,36 @@ class FlightMonitor:
         print("[RUN] run-once 执行完成", flush=True)
 
     def run_thailand_cheapest(self) -> None:
-        depart_date, return_date = self._get_active_date_pair()
+        self._warn_if_mock_provider("TH")
+        pairs = self._get_scan_date_pairs()
+        holiday_start, holiday_end = self._get_required_holiday_span()
+        window_start = pairs[0][0]
+        window_end = pairs[-1][1]
+        total_queries = len(pairs) * len(self.config.origins) * len(
+            self.config.thailand_destinations
+        )
         print(
             "[TH] 开始检索泰国最低价 "
-            f"date={depart_date}/{return_date}",
+            f"window={window_start}/{window_end} pairs={len(pairs)} "
+            f"holiday={holiday_start}/{holiday_end} "
+            f"origins={len(self.config.origins)} "
+            f"destinations={len(self.config.thailand_destinations)} "
+            f"queries={total_queries}",
             flush=True,
         )
 
-        best_item: dict[str, str | float | None] | None = None
+        best_item, _, scan_stats = self._scan_cheapest_for_destinations(
+            self.config.thailand_destinations
+        )
 
-        for origin in self.config.origins:
-            for destination in self.config.thailand_destinations:
-                if origin == destination:
-                    continue
-                print(
-                    "[TH] 查询 "
-                    f"{origin}->{destination} {depart_date}/{return_date}",
-                    flush=True,
-                )
-
-                source_price = self.provider.get_roundtrip_price(
-                    origin=origin,
-                    destination=destination,
-                    depart_date=depart_date,
-                    return_date=return_date,
-                    currency=self.config.currency,
-                )
-                if source_price is None:
-                    print(
-                        "[TH] 未取到价格 "
-                        f"{origin}->{destination}",
-                        flush=True,
-                    )
-                    continue
-
-                source_currency = (
-                    getattr(self.provider, "quote_currency", None)
-                    or self.config.currency
-                )
-                converted_price = source_price
-                fx_rate = 1.0
-                if source_currency != self.config.currency:
-                    converted_price, fx_rate = self.fx_converter.convert(
-                        amount=source_price,
-                        base=source_currency,
-                        target=self.config.currency,
-                    )
-
-                meta = self.provider.get_last_quote_meta()
-                depart_time = meta.get("depart_time")
-                if not self._is_depart_time_allowed(
-                    depart_time if isinstance(depart_time, str) else None
-                ):
-                    print(
-                        "[TH] 跳过（不满足最早起飞时间） "
-                        f"{origin}->{destination} dep={depart_time}",
-                        flush=True,
-                    )
-                    continue
-
-                print(
-                    "[TH-QUOTE] "
-                    f"{origin}->{destination} "
-                    f"dep={meta.get('depart_time') or 'N/A'} "
-                    f"arr={meta.get('arrive_time') or 'N/A'} "
-                    f"🔥PRICE={converted_price:.2f} {self.config.currency}🔥 "
-                    f"(src={source_price:.2f} {source_currency}, fx={fx_rate:.4f})",
-                    flush=True,
-                )
-
-                if (
-                    best_item is None
-                    or converted_price < float(best_item["converted_price"])
-                ):
-                    best_item = {
-                        "origin": origin,
-                        "destination": destination,
-                        "depart_time": (
-                            meta.get("depart_time")
-                            if isinstance(meta.get("depart_time"), str)
-                            else None
-                        ),
-                        "arrive_time": (
-                            meta.get("arrive_time")
-                            if isinstance(meta.get("arrive_time"), str)
-                            else None
-                        ),
-                        "converted_price": converted_price,
-                        "source_price": source_price,
-                        "source_currency": source_currency,
-                        "fx_rate": fx_rate,
-                    }
+        print(
+            "[TH-SCAN] "
+            f"provider={self.provider.name} "
+            f"queries={scan_stats['queries']} "
+            f"hits={scan_stats['hits']} "
+            f"elapsed={scan_stats['elapsed_seconds']:.1f}s",
+            flush=True,
+        )
 
         if not best_item:
             print("[TH] 未检索到可用价格", flush=True)
@@ -494,7 +597,7 @@ class FlightMonitor:
         print(
             "[TH-CHEAPEST] "
             f"{best_item['origin']}->{best_item['destination']} "
-            f"{depart_date}/{return_date} "
+            f"{best_item['depart_date']}/{best_item['return_date']} "
             f"dep={best_item['depart_time'] or 'N/A'} "
             f"arr={best_item['arrive_time'] or 'N/A'} "
             f"🔥PRICE={float(best_item['converted_price']):.2f} {self.config.currency}🔥 "
@@ -508,170 +611,221 @@ class FlightMonitor:
         self,
         destinations: list[str],
     ) -> tuple[
-        date,
-        date,
         dict[str, str | float | None] | None,
         dict[str, str | float | None] | None,
+        dict[str, int | float],
     ]:
-        depart_date, return_date = self._get_active_date_pair()
+        date_pairs = self._get_scan_date_pairs()
         best_item: dict[str, str | float | None] | None = None
         best_direct_item: dict[str, str | float | None] | None = None
+        best_acceptable_item: dict[str, str | float | None] | None = None
         best_transfer_within_limit: dict[str, str | float | None] | None = None
         best_transfer_shortest: dict[str, str | float | None] | None = None
-        best_transfer_shortest_score: tuple[float, float] | None = None
+        best_transfer_shortest_score: tuple[float, float, int] | None = None
+        query_count = 0
+        hit_count = 0
+        started_at = time.monotonic()
 
         provider_set_verbose = getattr(self.provider, "set_verbose", None)
+        provider_set_fast_scan_mode = getattr(
+            self.provider,
+            "set_fast_scan_mode",
+            None,
+        )
         if callable(provider_set_verbose):
             provider_set_verbose(False)
+        if callable(provider_set_fast_scan_mode):
+            provider_set_fast_scan_mode(True)
 
         try:
-            for origin in self.config.origins:
-                for destination in destinations:
-                    if origin == destination:
-                        continue
-                    source_price = self.provider.get_roundtrip_price(
-                        origin=origin,
-                        destination=destination,
-                        depart_date=depart_date,
-                        return_date=return_date,
-                        currency=self.config.currency,
-                    )
-                    if source_price is None:
-                        continue
-
-                    source_currency = (
-                        getattr(self.provider, "quote_currency", None)
-                        or self.config.currency
-                    )
-                    converted_price = source_price
-                    fx_rate = 1.0
-                    if source_currency != self.config.currency:
-                        converted_price, fx_rate = self.fx_converter.convert(
-                            amount=source_price,
-                            base=source_currency,
-                            target=self.config.currency,
+            for depart_date, return_date in date_pairs:
+                for origin in self.config.origins:
+                    for destination in destinations:
+                        if origin == destination:
+                            continue
+                        query_count += 1
+                        source_price = self.provider.get_roundtrip_price(
+                            origin=origin,
+                            destination=destination,
+                            depart_date=depart_date,
+                            return_date=return_date,
+                            currency=self.config.currency,
                         )
+                        if source_price is None:
+                            continue
+                        hit_count += 1
 
-                    meta = self.provider.get_last_quote_meta()
-                    depart_time = (
-                        meta.get("depart_time")
-                        if isinstance(meta.get("depart_time"), str)
-                        else None
-                    )
-                    if not self._is_depart_time_allowed(depart_time):
-                        continue
-
-                    candidate = {
-                        "origin": origin,
-                        "destination": destination,
-                        "depart_time": depart_time,
-                        "arrive_time": (
-                            meta.get("arrive_time")
-                            if isinstance(meta.get("arrive_time"), str)
-                            else None
-                        ),
-                        "return_depart_time": (
-                            meta.get("return_depart_time")
-                            if isinstance(meta.get("return_depart_time"), str)
-                            else None
-                        ),
-                        "return_arrive_time": (
-                            meta.get("return_arrive_time")
-                            if isinstance(meta.get("return_arrive_time"), str)
-                            else None
-                        ),
-                        "outbound_journey": (
-                            meta.get("outbound_journey")
-                            if isinstance(meta.get("outbound_journey"), str)
-                            else None
-                        ),
-                        "return_journey": (
-                            meta.get("return_journey")
-                            if isinstance(meta.get("return_journey"), str)
-                            else None
-                        ),
-                        "outbound_stopovers": (
-                            meta.get("outbound_stopovers")
-                            if isinstance(meta.get("outbound_stopovers"), str)
-                            else None
-                        ),
-                        "return_stopovers": (
-                            meta.get("return_stopovers")
-                            if isinstance(meta.get("return_stopovers"), str)
-                            else None
-                        ),
-                        "outbound_stopover_details": (
-                            meta.get("outbound_stopover_details")
-                            if isinstance(
-                                meta.get("outbound_stopover_details"),
-                                str,
+                        source_currency = (
+                            getattr(self.provider, "quote_currency", None)
+                            or self.config.currency
+                        )
+                        converted_price = source_price
+                        fx_rate = 1.0
+                        if source_currency != self.config.currency:
+                            converted_price, fx_rate = self.fx_converter.convert(
+                                amount=source_price,
+                                base=source_currency,
+                                target=self.config.currency,
                             )
-                            else None
-                        ),
-                        "return_stopover_details": (
-                            meta.get("return_stopover_details")
-                            if isinstance(
-                                meta.get("return_stopover_details"),
-                                str,
-                            )
-                            else None
-                        ),
-                        "flight_number": (
-                            meta.get("flight_number")
-                            if isinstance(meta.get("flight_number"), str)
-                            else None
-                        ),
-                        "converted_price": converted_price,
-                        "source_price": source_price,
-                        "source_currency": source_currency,
-                        "fx_rate": fx_rate,
-                    }
 
-                    if self._candidate_is_direct(candidate):
-                        if (
-                            best_direct_item is None
-                            or converted_price
-                            < float(best_direct_item["converted_price"])
+                        meta = self.provider.get_last_quote_meta()
+                        depart_time = (
+                            meta.get("depart_time")
+                            if isinstance(meta.get("depart_time"), str)
+                            else None
+                        )
+                        if not self._is_depart_time_allowed(depart_time):
+                            continue
+
+                        candidate = {
+                            "origin": origin,
+                            "destination": destination,
+                            "depart_date": depart_date.isoformat(),
+                            "return_date": return_date.isoformat(),
+                            "trip_days": (return_date - depart_date).days,
+                            "depart_time": depart_time,
+                            "arrive_time": (
+                                meta.get("arrive_time")
+                                if isinstance(meta.get("arrive_time"), str)
+                                else None
+                            ),
+                            "return_depart_time": (
+                                meta.get("return_depart_time")
+                                if isinstance(meta.get("return_depart_time"), str)
+                                else None
+                            ),
+                            "return_arrive_time": (
+                                meta.get("return_arrive_time")
+                                if isinstance(meta.get("return_arrive_time"), str)
+                                else None
+                            ),
+                            "outbound_journey": (
+                                meta.get("outbound_journey")
+                                if isinstance(meta.get("outbound_journey"), str)
+                                else None
+                            ),
+                            "return_journey": (
+                                meta.get("return_journey")
+                                if isinstance(meta.get("return_journey"), str)
+                                else None
+                            ),
+                            "outbound_stopovers": (
+                                meta.get("outbound_stopovers")
+                                if isinstance(meta.get("outbound_stopovers"), str)
+                                else None
+                            ),
+                            "return_stopovers": (
+                                meta.get("return_stopovers")
+                                if isinstance(meta.get("return_stopovers"), str)
+                                else None
+                            ),
+                            "outbound_stopover_details": (
+                                meta.get("outbound_stopover_details")
+                                if isinstance(
+                                    meta.get("outbound_stopover_details"),
+                                    str,
+                                )
+                                else None
+                            ),
+                            "return_stopover_details": (
+                                meta.get("return_stopover_details")
+                                if isinstance(
+                                    meta.get("return_stopover_details"),
+                                    str,
+                                )
+                                else None
+                            ),
+                            "flight_number": (
+                                meta.get("flight_number")
+                                if isinstance(meta.get("flight_number"), str)
+                                else None
+                            ),
+                            "converted_price": converted_price,
+                            "source_price": source_price,
+                            "source_currency": source_currency,
+                            "fx_rate": fx_rate,
+                        }
+
+                        if self._candidate_is_direct(candidate):
+                            if self._is_candidate_better_pricewise(
+                                candidate,
+                                best_direct_item,
+                            ):
+                                best_direct_item = candidate
+
+                        max_layover = self._candidate_max_layover_hours(candidate)
+                        if self._candidate_is_direct(candidate) or (
+                            max_layover is None or max_layover <= 3.0
                         ):
-                            best_direct_item = candidate
-                        continue
+                            if self._is_candidate_better_pricewise(
+                                candidate,
+                                best_acceptable_item,
+                            ):
+                                best_acceptable_item = candidate
 
-                    max_layover = self._candidate_max_layover_hours(candidate)
-                    if max_layover is not None and max_layover <= 3.0:
+                        if max_layover is not None and max_layover <= 3.0:
+                            if self._is_candidate_better_pricewise(
+                                candidate,
+                                best_transfer_within_limit,
+                            ):
+                                best_transfer_within_limit = candidate
+
+                        layover_score = (
+                            max_layover if max_layover is not None else 999.0
+                        )
+                        score = (
+                            layover_score,
+                            float(converted_price),
+                            -int(candidate["trip_days"]),
+                        )
                         if (
-                            best_transfer_within_limit is None
-                            or converted_price
-                            < float(best_transfer_within_limit["converted_price"])
+                            best_transfer_shortest_score is None
+                            or score < best_transfer_shortest_score
                         ):
-                            best_transfer_within_limit = candidate
-
-                    layover_score = max_layover if max_layover is not None else 999.0
-                    score = (layover_score, float(converted_price))
-                    if (
-                        best_transfer_shortest_score is None
-                        or score < best_transfer_shortest_score
-                    ):
-                        best_transfer_shortest_score = score
-                        best_transfer_shortest = candidate
+                            best_transfer_shortest_score = score
+                            best_transfer_shortest = candidate
         finally:
+            if callable(provider_set_fast_scan_mode):
+                provider_set_fast_scan_mode(False)
             if callable(provider_set_verbose):
                 provider_set_verbose(True)
 
-        if best_direct_item is not None:
-            best_item = best_direct_item
+        if best_acceptable_item is not None:
+            best_item = best_acceptable_item
         elif best_transfer_within_limit is not None:
             best_item = best_transfer_within_limit
         else:
             best_item = best_transfer_shortest
 
-        return depart_date, return_date, best_item, best_direct_item
+        best_item = self._enrich_candidate_details(best_item)
+        if (
+            best_item is not None
+            and best_direct_item is not None
+            and best_item["origin"] == best_direct_item["origin"]
+            and best_item["destination"] == best_direct_item["destination"]
+            and best_item["depart_date"] == best_direct_item["depart_date"]
+            and best_item["return_date"] == best_direct_item["return_date"]
+        ):
+            best_direct_item = best_item
+        else:
+            best_direct_item = self._enrich_candidate_details(best_direct_item)
+
+        elapsed_seconds = time.monotonic() - started_at
+        return (
+            best_item,
+            best_direct_item,
+            {
+                "queries": query_count,
+                "hits": hit_count,
+                "elapsed_seconds": elapsed_seconds,
+            },
+        )
 
     def run_best_deals_summary(self) -> None:
+        self._warn_if_mock_provider("SUMMARY")
         def format_deal_line(
             prefix: str,
             deal_item: dict[str, str | float | None],
-            depart_date_value: date,
-            return_date_value: date,
         ) -> str:
             depart_text = self._candidate_text_or_none(deal_item, "depart_time")
             arrive_text = self._candidate_text_or_none(deal_item, "arrive_time")
@@ -686,7 +840,7 @@ class FlightMonitor:
             base = (
                 f"{prefix} "
                 f"{deal_item['origin']}->{deal_item['destination']} "
-                f"{depart_date_value}/{return_date_value} "
+                f"{deal_item['depart_date']}/{deal_item['return_date']} "
                 f"go={depart_text or '--'}->{arrive_text or '--'} "
                 f"back={return_depart_text or '--'}->{return_arrive_text or '--'} "
                 f"🔥PRICE={float(deal_item['converted_price']):.2f} {self.config.currency}🔥 "
@@ -786,6 +940,7 @@ class FlightMonitor:
 
             lines = [
                 title,
+                f"- 日期: {deal_item['depart_date']} / {deal_item['return_date']}",
                 f"- 类型: {'直飞' if is_direct else '中转'}",
                 f"- 航线: {deal_item['origin']} -> {deal_item['destination']}",
                 (
@@ -867,37 +1022,54 @@ class FlightMonitor:
 
             return lines
 
-        (
-            depart_date,
-            return_date,
-            pqc_best,
-            pqc_best_direct,
-        ) = self._scan_cheapest_for_destinations(
+        pqc_pairs = self._get_scan_date_pairs()
+        holiday_start, holiday_end = self._get_required_holiday_span()
+        pqc_total_queries = len(pqc_pairs) * len(self.config.origins)
+        thailand_total_queries = (
+            len(pqc_pairs)
+            * len(self.config.origins)
+            * len(self.config.thailand_destinations)
+        )
+        print(
+            "[SUMMARY] 开始汇总 "
+            f"provider={self.provider.name} "
+            f"pairs={len(pqc_pairs)} "
+            f"holiday={holiday_start}/{holiday_end} "
+            f"pqc_queries={pqc_total_queries} "
+            f"th_queries={thailand_total_queries}",
+            flush=True,
+        )
+
+        pqc_best, pqc_best_direct, pqc_scan_stats = self._scan_cheapest_for_destinations(
             [self.config.destination]
         )
-        (
-            _,
-            _,
-            thailand_best,
-            thailand_best_direct,
-        ) = self._scan_cheapest_for_destinations(
+        thailand_best, thailand_best_direct, thailand_scan_stats = self._scan_cheapest_for_destinations(
             self.config.thailand_destinations
         )
 
+        print(
+            "[SUMMARY-SCAN] "
+            f"PQC queries={pqc_scan_stats['queries']} "
+            f"hits={pqc_scan_stats['hits']} "
+            f"elapsed={pqc_scan_stats['elapsed_seconds']:.1f}s | "
+            f"TH queries={thailand_scan_stats['queries']} "
+            f"hits={thailand_scan_stats['hits']} "
+            f"elapsed={thailand_scan_stats['elapsed_seconds']:.1f}s",
+            flush=True,
+        )
+
         summary_lines: list[str] = [
-            f"[机票汇总] {depart_date}/{return_date}",
+            "[机票汇总] PQC 与泰国独立日期匹配",
         ]
 
         if pqc_best is None:
-            line = f"[DEAL-PQC] {depart_date}/{return_date} 无可用价格"
+            line = "[DEAL-PQC] 无可用价格"
             print(line, flush=True)
             summary_lines.append(line)
         else:
             line = format_deal_line(
                 "[DEAL-PQC]",
                 pqc_best,
-                depart_date,
-                return_date,
             )
             print(line, flush=True)
             summary_lines.append(line)
@@ -908,22 +1080,18 @@ class FlightMonitor:
                 direct_line = format_deal_line(
                     "[DEAL-PQC-DIRECT]",
                     pqc_best_direct,
-                    depart_date,
-                    return_date,
                 )
                 print(direct_line, flush=True)
                 summary_lines.append(direct_line)
 
         if thailand_best is None:
-            line = f"[DEAL-TH] {depart_date}/{return_date} 无可用价格"
+            line = "[DEAL-TH] 无可用价格"
             print(line, flush=True)
             summary_lines.append(line)
         else:
             line = format_deal_line(
                 "[DEAL-TH]",
                 thailand_best,
-                depart_date,
-                return_date,
             )
             print(line, flush=True)
             summary_lines.append(line)
@@ -934,8 +1102,6 @@ class FlightMonitor:
                 direct_line = format_deal_line(
                     "[DEAL-TH-DIRECT]",
                     thailand_best_direct,
-                    depart_date,
-                    return_date,
                 )
                 print(direct_line, flush=True)
                 summary_lines.append(direct_line)
@@ -944,7 +1110,7 @@ class FlightMonitor:
             try:
                 feishu_lines: list[str] = [
                     "【机票汇总】",
-                    f"日期: {depart_date} / {return_date}",
+                    "日期: 已按目的地独立匹配",
                     "",
                     *build_feishu_deal_block(
                         "【PQC 最低价】",
@@ -966,6 +1132,11 @@ class FlightMonitor:
                 print("[FEISHU] 汇总推送成功", flush=True)
             except Exception as error:
                 print(f"[FEISHU] 汇总推送失败: {error}", flush=True)
+        else:
+            print(
+                "[FEISHU] 未配置 feishu_webhook_url，已跳过汇总推送",
+                flush=True,
+            )
 
     def run_loop(self) -> None:
         print(

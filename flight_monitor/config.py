@@ -75,7 +75,7 @@ def create_default_config(year: int | None = None) -> AppConfig:
         fixed_depart_date=None,
         fixed_return_date=None,
         min_depart_time=None,
-        min_trip_days=3,
+        min_trip_days=4,
     )
 
 
@@ -139,7 +139,7 @@ def load_config(config_path: Path) -> AppConfig:
             else None
         ),
         min_depart_time=payload.get("min_depart_time"),
-        min_trip_days=int(payload.get("min_trip_days", 3)),
+        min_trip_days=int(payload.get("min_trip_days", 4)),
     )
 
 
