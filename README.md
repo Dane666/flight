@@ -64,6 +64,26 @@ python main.py run-thailand-cheapest --config config.yaml
 - 运行命令：`python main.py run-best-deals-summary --config config.yaml`
 - 支持手动触发：`workflow_dispatch`
 - 配置来源：优先读取仓库 Secret `MONITOR_CONFIG_YAML` 写入 `config.yaml`，若未配置则自动生成默认配置
+- 若希望 GitHub Actions 使用 `google_flights`，建议至少配置仓库 Secret `SERPAPI_API_KEY`
+- 可选 Secret：`GOOGLE_FLIGHTS_HL`、`GOOGLE_FLIGHTS_GL`、`FEISHU_WEBHOOK_URL`、`FEISHU_SECRET`
+
+### GitHub Secrets（Google Flights）
+
+若希望仓库里的定时任务默认使用 `google_flights`，在 GitHub 仓库中配置：
+
+- `SERPAPI_API_KEY`: 你的 SerpApi Key
+- `GOOGLE_FLIGHTS_HL`: 可选，默认 `en`
+- `GOOGLE_FLIGHTS_GL`: 可选，默认 `hk`
+- `FEISHU_WEBHOOK_URL`: 可选，飞书机器人 webhook
+- `FEISHU_SECRET`: 可选，飞书签名密钥
+
+配置入口：
+
+- GitHub 仓库页面
+- `Settings`
+- `Secrets and variables`
+- `Actions`
+- `New repository secret`
 
 ## 配置说明（核心字段）
 
