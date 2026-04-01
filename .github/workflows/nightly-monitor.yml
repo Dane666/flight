@@ -35,22 +35,62 @@ jobs:
 
       - name: Build config.yaml from secrets
         env:
-          MONITOR_CONFIG_YAML: ${{ secrets.MONITOR_CONFIG_YAML }}
           FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
           FEISHU_SECRET: ${{ secrets.FEISHU_SECRET }}
           SERPAPI_API_KEY: ${{ secrets.SERPAPI_API_KEY }}
           GOOGLE_FLIGHTS_HL: ${{ secrets.GOOGLE_FLIGHTS_HL }}
           GOOGLE_FLIGHTS_GL: ${{ secrets.GOOGLE_FLIGHTS_GL }}
         run: |
-          if [ -n "$MONITOR_CONFIG_YAML" ]; then
-            printf '%s\n' "$MONITOR_CONFIG_YAML" > config.yaml
-            echo "Using MONITOR_CONFIG_YAML secret"
-          else
-            python main.py init-config --force
-            echo "MONITOR_CONFIG_YAML not set, generated default config"
-          fi
+          python main.py init-config --force
+          echo "Generated default config.yaml from repository defaults"
 
-          python -c "from pathlib import Path; import os, sys, yaml; content = Path('config.yaml').read_text(encoding='utf-8'); obj = yaml.safe_load(content); obj = yaml.safe_load(obj) if isinstance(obj, str) else obj; assert isinstance(obj, dict), f'Invalid config type: {type(obj).__name__}'; has_full = bool(os.getenv('MONITOR_CONFIG_YAML')); fw = os.getenv('FEISHU_WEBHOOK_URL'); fs = os.getenv('FEISHU_SECRET'); serpapi = os.getenv('SERPAPI_API_KEY'); gf_hl = os.getenv('GOOGLE_FLIGHTS_HL'); gf_gl = os.getenv('GOOGLE_FLIGHTS_GL'); obj['feishu_webhook_url'] = fw if fw else obj.get('feishu_webhook_url'); obj['feishu_secret'] = fs if fs else obj.get('feishu_secret'); obj['serpapi_api_key'] = serpapi if serpapi else obj.get('serpapi_api_key'); obj['google_flights_hl'] = gf_hl if gf_hl else obj.get('google_flights_hl', 'en'); obj['google_flights_gl'] = gf_gl if gf_gl else obj.get('google_flights_gl', 'hk'); if has_full: obj['provider'] = obj.get('provider', 'google_flights'); else: obj['provider'] = 'google_flights' if obj.get('serpapi_api_key') else 'trip_scrape'; obj['currency'] = obj.get('currency', 'CNY'); obj['trip_scrape_timeout_seconds'] = int(obj.get('trip_scrape_timeout_seconds', 60)); obj['origins'] = obj.get('origins', ['CAN', 'SZX', 'HKG']); obj['destination'] = obj.get('destination', 'PQC'); obj['thailand_destinations'] = obj.get('thailand_destinations', ['BKK', 'DMK', 'HKT', 'CNX', 'KBV']); obj['window_start'] = obj.get('window_start', '2026-06-18'); obj['window_end'] = obj.get('window_end', '2026-06-21'); obj['fixed_depart_date'] = obj.get('fixed_depart_date', '2026-06-18'); obj['fixed_return_date'] = obj.get('fixed_return_date', '2026-06-21'); obj['min_depart_time'] = obj.get('min_depart_time', '12:00'); if obj.get('provider') == 'google_flights' and not obj.get('serpapi_api_key'): sys.exit('SERPAPI_API_KEY is required when provider=google_flights'); Path('config.yaml').write_text(yaml.safe_dump(obj, allow_unicode=True, sort_keys=False), encoding='utf-8'); print('config.yaml ready, provider=' + str(obj.get('provider')) + ', dates=' + str(obj.get('fixed_depart_date')) + '/' + str(obj.get('fixed_return_date')))"
+          python - <<'PY'
+          from pathlib import Path
+          import os
+          import sys
+          import yaml
+
+          path = Path("config.yaml")
+          obj = yaml.safe_load(path.read_text(encoding="utf-8"))
+          if isinstance(obj, str):
+              obj = yaml.safe_load(obj)
+          assert isinstance(obj, dict), f"Invalid config type: {type(obj).__name__}"
+
+          serpapi = os.getenv("SERPAPI_API_KEY")
+          feishu_webhook = os.getenv("FEISHU_WEBHOOK_URL")
+          feishu_secret = os.getenv("FEISHU_SECRET")
+          google_hl = os.getenv("GOOGLE_FLIGHTS_HL") or "en"
+          google_gl = os.getenv("GOOGLE_FLIGHTS_GL") or "hk"
+
+          obj["serpapi_api_key"] = serpapi
+          obj["google_flights_hl"] = google_hl
+          obj["google_flights_gl"] = google_gl
+          obj["provider"] = "google_flights" if serpapi else "trip_scrape"
+          obj["currency"] = obj.get("currency", "CNY")
+          obj["trip_scrape_timeout_seconds"] = int(
+              obj.get("trip_scrape_timeout_seconds", 60)
+          )
+          obj["notifier"] = "feishu" if feishu_webhook else obj.get(
+              "notifier",
+              "console",
+          )
+          obj["feishu_webhook_url"] = feishu_webhook
+          obj["feishu_secret"] = feishu_secret
+
+          if obj["provider"] == "google_flights" and not obj["serpapi_api_key"]:
+              sys.exit("SERPAPI_API_KEY is required when provider=google_flights")
+
+          path.write_text(
+              yaml.safe_dump(obj, allow_unicode=True, sort_keys=False),
+              encoding="utf-8",
+          )
+          print(
+              "config.yaml ready, "
+              f"provider={obj.get('provider')}, "
+              f"notifier={obj.get('notifier')}, "
+              f"window={obj.get('window_start')}/{obj.get('window_end')}"
+          )
+          PY
 
       - name: Run summary monitor
         run: |
