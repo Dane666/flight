@@ -207,18 +207,87 @@ class TripScrapePriceProvider(PriceProvider):
         lines = [line.strip() for line in page_text.splitlines() if line.strip()]
         start_idx = None
         for index, line in enumerate(lines):
-            if "1. departures to" in line.lower():
+            lower_line = line.lower()
+            if (
+                "1. departures to" in lower_line
+                or "select departure flight" in lower_line
+                or lower_line == "depart"
+                or lower_line.startswith("1 depart")
+            ):
                 start_idx = index
                 break
         if start_idx is None:
             return None
 
+        result_lines = lines[start_idx:min(len(lines), start_idx + 80)]
         prices: list[float] = []
-        for probe in range(start_idx, min(len(lines), start_idx + 80)):
-            prices.extend(self._extract_price_token_values(lines[probe]))
+        for line in result_lines:
+            prices.extend(self._extract_price_token_values(line))
         if not prices:
             return None
-        return min(prices)
+
+        total_keyword_price = self._extract_total_keyword_price(result_lines)
+        if total_keyword_price is not None:
+            return total_keyword_price
+
+        deduped_prices = sorted({price for price in prices})
+        if self._has_returning_section(result_lines):
+            inferred_total = self._infer_roundtrip_total_price(deduped_prices)
+            if inferred_total is not None:
+                return inferred_total
+            if len(deduped_prices) == 1:
+                return deduped_prices[0]
+            return None
+
+        return min(deduped_prices)
+
+    def _extract_total_keyword_price(self, lines: list[str]) -> float | None:
+        keywords = (
+            "total",
+            "total price",
+            "trip total",
+            "round trip",
+            "roundtrip",
+            "per adult",
+        )
+        for index, line in enumerate(lines):
+            lower_line = line.lower()
+            if not any(keyword in lower_line for keyword in keywords):
+                continue
+            for probe in range(max(0, index - 1), min(len(lines), index + 3)):
+                price = self._extract_price_token_value(lines[probe])
+                if price is not None:
+                    return price
+        return None
+
+    def _infer_roundtrip_total_price(
+        self,
+        prices: list[float],
+    ) -> float | None:
+        tolerance_floor = 20.0
+        for total_price in prices:
+            component_prices = [price for price in prices if price < total_price]
+            for index, first_price in enumerate(component_prices):
+                for second_price in component_prices[index + 1 :]:
+                    tolerance = max(tolerance_floor, total_price * 0.03)
+                    if abs((first_price + second_price) - total_price) <= tolerance:
+                        return total_price
+        return None
+
+    def _has_returning_section(self, lines: list[str]) -> bool:
+        for line in lines:
+            lower_line = line.lower()
+            if "2. returning" in lower_line or "returning to" in lower_line:
+                return True
+        return False
+
+    def _has_roundtrip_result_context(self, page_text: str) -> bool:
+        lines = [line.strip() for line in page_text.splitlines() if line.strip()]
+        has_departures = any(
+            "1. departures to" in line.lower() or "departures to" in line.lower()
+            for line in lines
+        )
+        return has_departures and self._has_returning_section(lines)
 
     def _extract_dom_lowest_price(self, page) -> float | None:
         selectors = [
@@ -547,35 +616,61 @@ class TripScrapePriceProvider(PriceProvider):
 
         outbound_section = self._find_section(
             lines,
-            start_keywords=("1. departures", "departures to"),
-            end_keywords=("2. returning", "returning to"),
+            start_keywords=(
+                "1. departures",
+                "departures to",
+                "select departure flight",
+                "1 depart",
+                "depart",
+            ),
+            end_keywords=(
+                "2. returning",
+                "returning to",
+                "select return flight",
+                "2 return",
+                "return",
+            ),
         )
         return_section = self._find_section(
             lines,
-            start_keywords=("2. returning", "returning to"),
+            start_keywords=(
+                "2. returning",
+                "returning to",
+                "select return flight",
+                "2 return",
+                "return",
+            ),
         )
 
         outbound_depart, outbound_arrive = self._extract_times_from_lines(
             outbound_section if outbound_section else lines
         )
         return_depart, return_arrive = self._extract_times_from_lines(
-            return_section if return_section else lines
+            return_section
         )
 
         outbound_journey, outbound_stopovers = self._extract_journey_and_stopovers(
             outbound_section if outbound_section else lines
         )
         return_journey, return_stopovers = self._extract_journey_and_stopovers(
-            return_section if return_section else lines
+            return_section
         )
         outbound_stopover_details = self._extract_stopover_details(
             outbound_section if outbound_section else lines,
             journey_hint=outbound_journey,
         )
         return_stopover_details = self._extract_stopover_details(
-            return_section if return_section else lines,
+            return_section,
             journey_hint=return_journey,
         )
+
+        if (
+            return_depart == outbound_depart
+            and return_arrive == outbound_arrive
+            and not return_section
+        ):
+            return_depart = None
+            return_arrive = None
 
         flight_number = self._extract_flight_number(
             page_text,
@@ -734,13 +829,8 @@ class TripScrapePriceProvider(PriceProvider):
             phase_prices: list[float] = []
             if phase in {"selected", "scrolled"}:
                 price = self._extract_result_list_price(text)
-                if price is None:
-                    price = self._extract_min_price(text)
                 if price is not None:
                     phase_prices.append(price)
-                dom_price = self._extract_dom_lowest_price(page)
-                if dom_price is not None:
-                    phase_prices.append(dom_price)
             if not phase_prices:
                 continue
             price = min(phase_prices)
