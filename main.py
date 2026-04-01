@@ -10,6 +10,9 @@ from flight_monitor.config import (
 from flight_monitor.monitor import FlightMonitor
 from flight_monitor.notifier import ConsoleNotifier, EmailNotifier, FeishuNotifier
 from flight_monitor.providers.amadeus_provider import AmadeusPriceProvider
+from flight_monitor.providers.google_flights_provider import (
+    GoogleFlightsPriceProvider,
+)
 from flight_monitor.providers.kiwi_provider import KiwiPriceProvider
 from flight_monitor.providers.mock_provider import MockPriceProvider
 from flight_monitor.providers.trip_scrape_provider import (
@@ -24,6 +27,16 @@ def build_monitor(config_path: Path) -> FlightMonitor:
     provider_name = config.provider.lower().strip()
     if provider_name == "mock":
         provider = MockPriceProvider()
+    elif provider_name == "google_flights":
+        if not config.serpapi_api_key:
+            raise ValueError(
+                "provider=google_flights 时必须配置 serpapi_api_key"
+            )
+        provider = GoogleFlightsPriceProvider(
+            api_key=config.serpapi_api_key,
+            hl=config.google_flights_hl,
+            gl=config.google_flights_gl,
+        )
     elif provider_name == "kiwi":
         if not config.kiwi_api_key:
             raise ValueError("provider=kiwi 时必须配置 kiwi_api_key")

@@ -6,7 +6,7 @@
 - 目的地：越南富国岛(PQC)
 - 日期窗口：自动取当前年份端午节前后 5 天
 
-> 当前版本支持 `trip_scrape` 网页抓取（无需 API Key）、`mock` 演示数据、以及可选 `kiwi` / `amadeus`。
+> 当前版本支持 `trip_scrape` 网页抓取（无需 API Key）、`google_flights`（SerpApi Google Flights）、`mock` 演示数据、以及可选 `kiwi` / `amadeus`。
 
 完整操作说明见：`docs/使用文档.md`
 
@@ -67,10 +67,12 @@ python main.py run-thailand-cheapest --config config.yaml
 
 ## 配置说明（核心字段）
 
-- `provider`: `trip_scrape` / `mock` / `kiwi` / `amadeus`
+- `provider`: `trip_scrape` / `google_flights` / `mock` / `kiwi` / `amadeus`
+- `serpapi_api_key`: 当 `provider=google_flights` 时必填
 - `kiwi_api_key`: 当 `provider=kiwi` 时必填
 - `amadeus_client_id` / `amadeus_client_secret`: 当 `provider=amadeus` 时必填
 - `amadeus_base_url`: 默认 `https://test.api.amadeus.com`
+- `google_flights_hl` / `google_flights_gl`: Google Flights 搜索语言与地区参数
 - `trip_scrape_timeout_seconds`: Trip 网页抓取超时（秒）
 - `currency`: 货币代码，如 `CNY`
 - `alert_threshold`: 触发告警的价格上限
@@ -84,6 +86,24 @@ python main.py run-thailand-cheapest --config config.yaml
 - `smtp_host`/`smtp_port`/`smtp_username`/`smtp_password`/`smtp_use_tls`: 邮件配置
 - `email_from`/`email_to`: 发件人与收件人列表
 - `feishu_webhook_url`/`feishu_secret`: 飞书机器人 webhook 与可选签名密钥
+
+## 启用 Google Flights（SerpApi）
+
+编辑 `config.yaml`：
+
+```yaml
+provider: google_flights
+serpapi_api_key: "<YOUR_SERPAPI_KEY>"
+google_flights_hl: en
+google_flights_gl: hk
+notifier: console
+```
+
+说明：
+
+- 该模式通过 SerpApi 调用 Google Flights，返回结构化的往返字段。
+- 当前实现会优先拿去程最低价候选，再用 `departure_token` 补拿返程详情，因此返程时刻与航班号通常比网页抓取更完整。
+- 为保留旧链路，默认配置不会自动切换；你可以在独立配置文件中先验证 `google_flights`，确认满意后再改正式配置。
 
 ## 启用 Kiwi 实时查询（示例）
 

@@ -10,10 +10,13 @@ from flight_monitor.date_utils import around_day_window, dragon_boat_date
 @dataclass(frozen=True)
 class AppConfig:
     provider: str
+    serpapi_api_key: str | None
     kiwi_api_key: str | None
     amadeus_client_id: str | None
     amadeus_client_secret: str | None
     amadeus_base_url: str
+    google_flights_hl: str
+    google_flights_gl: str
     trip_scrape_timeout_seconds: int
     currency: str
     interval_minutes: int
@@ -49,10 +52,13 @@ def create_default_config(year: int | None = None) -> AppConfig:
     start, end = around_day_window(dragon_boat, days=5)
     return AppConfig(
         provider="mock",
+        serpapi_api_key=None,
         kiwi_api_key=None,
         amadeus_client_id=None,
         amadeus_client_secret=None,
         amadeus_base_url="https://test.api.amadeus.com",
+        google_flights_hl="en",
+        google_flights_gl="hk",
         trip_scrape_timeout_seconds=60,
         currency="CNY",
         interval_minutes=30,
@@ -98,12 +104,15 @@ def load_config(config_path: Path) -> AppConfig:
 
     return AppConfig(
         provider=payload.get("provider", "mock"),
+        serpapi_api_key=payload.get("serpapi_api_key"),
         kiwi_api_key=payload.get("kiwi_api_key"),
         amadeus_client_id=payload.get("amadeus_client_id"),
         amadeus_client_secret=payload.get("amadeus_client_secret"),
         amadeus_base_url=payload.get(
             "amadeus_base_url", "https://test.api.amadeus.com"
         ),
+        google_flights_hl=payload.get("google_flights_hl", "en"),
+        google_flights_gl=payload.get("google_flights_gl", "hk"),
         trip_scrape_timeout_seconds=int(
             payload.get("trip_scrape_timeout_seconds", 60)
         ),
@@ -153,10 +162,13 @@ def save_config(config: AppConfig, output_path: Path) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "provider": config.provider,
+        "serpapi_api_key": config.serpapi_api_key,
         "kiwi_api_key": config.kiwi_api_key,
         "amadeus_client_id": config.amadeus_client_id,
         "amadeus_client_secret": config.amadeus_client_secret,
         "amadeus_base_url": config.amadeus_base_url,
+        "google_flights_hl": config.google_flights_hl,
+        "google_flights_gl": config.google_flights_gl,
         "trip_scrape_timeout_seconds": config.trip_scrape_timeout_seconds,
         "currency": config.currency,
         "interval_minutes": config.interval_minutes,
