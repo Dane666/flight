@@ -10,6 +10,7 @@ from flight_monitor.config import (
 from flight_monitor.monitor import FlightMonitor
 from flight_monitor.notifier import ConsoleNotifier, EmailNotifier, FeishuNotifier
 from flight_monitor.providers.amadeus_provider import AmadeusPriceProvider
+from flight_monitor.providers.fallback_provider import FallbackPriceProvider
 from flight_monitor.providers.google_flights_provider import (
     GoogleFlightsPriceProvider,
 )
@@ -32,10 +33,17 @@ def build_monitor(config_path: Path) -> FlightMonitor:
             raise ValueError(
                 "provider=google_flights 时必须配置 serpapi_api_key"
             )
-        provider = GoogleFlightsPriceProvider(
+        google_provider = GoogleFlightsPriceProvider(
             api_key=config.serpapi_api_key,
             hl=config.google_flights_hl,
             gl=config.google_flights_gl,
+        )
+        trip_fallback_provider = TripScrapePriceProvider(
+            timeout_seconds=config.trip_scrape_timeout_seconds,
+        )
+        provider = FallbackPriceProvider(
+            primary=google_provider,
+            fallback=trip_fallback_provider,
         )
     elif provider_name == "kiwi":
         if not config.kiwi_api_key:

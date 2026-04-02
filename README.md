@@ -63,7 +63,7 @@ python main.py run-thailand-cheapest --config config.yaml
 - 触发时间：每天北京时间 00:00（GitHub 使用 UTC，对应 `0 16 * * *`）
 - 运行命令：`python main.py run-best-deals-summary --config config.yaml`
 - 支持手动触发：`workflow_dispatch`
-- 配置来源：优先读取仓库 Secret `MONITOR_CONFIG_YAML` 写入 `config.yaml`，若未配置则自动生成默认配置
+- 配置来源：工作流会自动生成默认 `config.yaml`
 - 若希望 GitHub Actions 使用 `google_flights`，建议至少配置仓库 Secret `SERPAPI_API_KEY`
 - 可选 Secret：`GOOGLE_FLIGHTS_HL`、`GOOGLE_FLIGHTS_GL`、`FEISHU_WEBHOOK_URL`、`FEISHU_SECRET`
 
@@ -98,6 +98,10 @@ python main.py run-thailand-cheapest --config config.yaml
 - `alert_threshold`: 触发告警的价格上限
 - `alert_cooldown_minutes`: 同一航线+日期组合告警冷却时间
 - `window_start` / `window_end`: 往返日期窗口（系统会生成 `去程 < 返程` 的组合）
+- `origins`: 去程出发地列表
+- `destination`: 主监控目的地
+- `thailand_destinations`: 泰国候选目的地列表
+- `fixed_depart_date` / `fixed_return_date`: 若同时设置，汇总检索会围绕该日期段自动扩窗
 - `min_trip_days`: 最小行程天数（默认 4，避免默认出现 3 天往返）
 - `window_start` / `window_end` 与 `min_trip_days` 只是基础约束；系统还会额外要求往返日期完整覆盖端午假期
 - `max_trip_span_days`: 去返总跨度上限（默认 6 天，含端午假期）
@@ -122,8 +126,33 @@ notifier: console
 说明：
 
 - 该模式通过 SerpApi 调用 Google Flights，返回结构化的往返字段。
-- 当前实现会优先拿去程最低价候选，再用 `departure_token` 补拿返程详情，因此返程时刻与航班号通常比网页抓取更完整。
+- 当前实现会优先拿去程最低价候选，再用 `departure_token` 补拿返程详情。
+- 因此通常能拿到：去返程时刻、航班号、往返路线、承运航司、舱位、机型、时长、Google 价格参考。
+- 如果 Google Flights 因配额耗尽、网络失败或 API 错误不可用，程序会在当前运行中自动切回 `trip_scrape` 继续检索。
+- 行李和退改签理论上需要更后面的 booking options / 下单链路，但这条链路在真实请求里不够稳定，也会额外消耗次数，所以当前版本默认不展示这两类占位文案。
 - 为保留旧链路，默认配置不会自动切换；你可以在独立配置文件中先验证 `google_flights`，确认满意后再改正式配置。
+
+## 怎么更容易搜到便宜票
+
+- 不要一开始就固定死单一去返日期，先给 `window_start/window_end`
+- 节假日场景建议保留“完整覆盖端午 + 总跨度 <= 6 天 + 假期外请假工作日 <= 3 天”这组约束
+- 第一次先用 1 个出发地、1 个目的地、5 到 7 天窗口跑通，再逐步放大
+- 如果你已经知道大致出行日，就配置 `fixed_depart_date/fixed_return_date`，让系统围绕这组日期扩窗匹配
+
+## 第一次使用最小配置
+
+```yaml
+provider: google_flights
+serpapi_api_key: "<YOUR_SERPAPI_KEY>"
+origins:
+  - HKG
+destination: PQC
+thailand_destinations:
+  - BKK
+window_start: "2026-06-17"
+window_end: "2026-06-22"
+notifier: console
+```
 
 ## 启用 Kiwi 实时查询（示例）
 

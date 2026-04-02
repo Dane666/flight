@@ -357,6 +357,71 @@ class FlightMonitor:
                         if isinstance(meta.get("flight_number"), str)
                         else None
                     ),
+                    "outbound_airline": (
+                        meta.get("outbound_airline")
+                        if isinstance(meta.get("outbound_airline"), str)
+                        else None
+                    ),
+                    "return_airline": (
+                        meta.get("return_airline")
+                        if isinstance(meta.get("return_airline"), str)
+                        else None
+                    ),
+                    "outbound_travel_class": (
+                        meta.get("outbound_travel_class")
+                        if isinstance(meta.get("outbound_travel_class"), str)
+                        else None
+                    ),
+                    "return_travel_class": (
+                        meta.get("return_travel_class")
+                        if isinstance(meta.get("return_travel_class"), str)
+                        else None
+                    ),
+                    "outbound_airplane": (
+                        meta.get("outbound_airplane")
+                        if isinstance(meta.get("outbound_airplane"), str)
+                        else None
+                    ),
+                    "return_airplane": (
+                        meta.get("return_airplane")
+                        if isinstance(meta.get("return_airplane"), str)
+                        else None
+                    ),
+                    "outbound_duration": (
+                        meta.get("outbound_duration")
+                        if isinstance(meta.get("outbound_duration"), str)
+                        else None
+                    ),
+                    "return_duration": (
+                        meta.get("return_duration")
+                        if isinstance(meta.get("return_duration"), str)
+                        else None
+                    ),
+                    "outbound_extensions": (
+                        meta.get("outbound_extensions")
+                        if isinstance(meta.get("outbound_extensions"), str)
+                        else None
+                    ),
+                    "return_extensions": (
+                        meta.get("return_extensions")
+                        if isinstance(meta.get("return_extensions"), str)
+                        else None
+                    ),
+                    "outbound_carbon": (
+                        meta.get("outbound_carbon")
+                        if isinstance(meta.get("outbound_carbon"), str)
+                        else None
+                    ),
+                    "return_carbon": (
+                        meta.get("return_carbon")
+                        if isinstance(meta.get("return_carbon"), str)
+                        else None
+                    ),
+                    "price_insights": (
+                        meta.get("price_insights")
+                        if isinstance(meta.get("price_insights"), str)
+                        else None
+                    ),
                     "source_price": source_price,
                     "source_currency": source_currency,
                     "converted_price": converted_price,
@@ -776,6 +841,71 @@ class FlightMonitor:
                                 if isinstance(meta.get("flight_number"), str)
                                 else None
                             ),
+                            "outbound_airline": (
+                                meta.get("outbound_airline")
+                                if isinstance(meta.get("outbound_airline"), str)
+                                else None
+                            ),
+                            "return_airline": (
+                                meta.get("return_airline")
+                                if isinstance(meta.get("return_airline"), str)
+                                else None
+                            ),
+                            "outbound_travel_class": (
+                                meta.get("outbound_travel_class")
+                                if isinstance(meta.get("outbound_travel_class"), str)
+                                else None
+                            ),
+                            "return_travel_class": (
+                                meta.get("return_travel_class")
+                                if isinstance(meta.get("return_travel_class"), str)
+                                else None
+                            ),
+                            "outbound_airplane": (
+                                meta.get("outbound_airplane")
+                                if isinstance(meta.get("outbound_airplane"), str)
+                                else None
+                            ),
+                            "return_airplane": (
+                                meta.get("return_airplane")
+                                if isinstance(meta.get("return_airplane"), str)
+                                else None
+                            ),
+                            "outbound_duration": (
+                                meta.get("outbound_duration")
+                                if isinstance(meta.get("outbound_duration"), str)
+                                else None
+                            ),
+                            "return_duration": (
+                                meta.get("return_duration")
+                                if isinstance(meta.get("return_duration"), str)
+                                else None
+                            ),
+                            "outbound_extensions": (
+                                meta.get("outbound_extensions")
+                                if isinstance(meta.get("outbound_extensions"), str)
+                                else None
+                            ),
+                            "return_extensions": (
+                                meta.get("return_extensions")
+                                if isinstance(meta.get("return_extensions"), str)
+                                else None
+                            ),
+                            "outbound_carbon": (
+                                meta.get("outbound_carbon")
+                                if isinstance(meta.get("outbound_carbon"), str)
+                                else None
+                            ),
+                            "return_carbon": (
+                                meta.get("return_carbon")
+                                if isinstance(meta.get("return_carbon"), str)
+                                else None
+                            ),
+                            "price_insights": (
+                                meta.get("price_insights")
+                                if isinstance(meta.get("price_insights"), str)
+                                else None
+                            ),
                             "converted_price": converted_price,
                             "source_price": source_price,
                             "source_currency": source_currency,
@@ -944,6 +1074,50 @@ class FlightMonitor:
                 deal_item,
                 "return_stopover_details",
             )
+            outbound_airline_text = self._candidate_text_or_none(
+                deal_item,
+                "outbound_airline",
+            )
+            return_airline_text = self._candidate_text_or_none(
+                deal_item,
+                "return_airline",
+            )
+            outbound_travel_class_text = self._candidate_text_or_none(
+                deal_item,
+                "outbound_travel_class",
+            )
+            return_travel_class_text = self._candidate_text_or_none(
+                deal_item,
+                "return_travel_class",
+            )
+            outbound_airplane_text = self._candidate_text_or_none(
+                deal_item,
+                "outbound_airplane",
+            )
+            return_airplane_text = self._candidate_text_or_none(
+                deal_item,
+                "return_airplane",
+            )
+            outbound_duration_text = self._candidate_text_or_none(
+                deal_item,
+                "outbound_duration",
+            )
+            return_duration_text = self._candidate_text_or_none(
+                deal_item,
+                "return_duration",
+            )
+            price_insights_text = self._candidate_text_or_none(
+                deal_item,
+                "price_insights",
+            )
+            outbound_carbon_text = self._candidate_text_or_none(
+                deal_item,
+                "outbound_carbon",
+            )
+            return_carbon_text = self._candidate_text_or_none(
+                deal_item,
+                "return_carbon",
+            )
 
             go_duration = self._format_leg_duration(
                 depart_text,
@@ -989,15 +1163,40 @@ class FlightMonitor:
                 ),
                 f"- 中转次数: 去程 {go_stops} / 返程 {back_stops}",
                 f"- 红眼航班: {redeye_text}",
-                "- 行李规则: 待下单页确认（抓取页未稳定提供）",
-                "- 退改签: 待下单页确认（抓取页未稳定提供）",
             ]
 
             if go_duration != "N/A" or back_duration != "N/A":
                 lines.append(f"- 总时长: 去程 {go_duration} / 返程 {back_duration}")
+            elif outbound_duration_text or return_duration_text:
+                lines.append(
+                    f"- 总时长: 去程 {outbound_duration_text or '--'} / "
+                    f"返程 {return_duration_text or '--'}"
+                )
 
             if flight_number_text:
                 lines.append(f"- 航司/航班: {flight_number_text}")
+            if outbound_airline_text or return_airline_text:
+                lines.append(
+                    f"- 承运航司: 去程 {outbound_airline_text or '--'} / "
+                    f"返程 {return_airline_text or '--'}"
+                )
+            if outbound_travel_class_text or return_travel_class_text:
+                lines.append(
+                    f"- 舱位: 去程 {outbound_travel_class_text or '--'} / "
+                    f"返程 {return_travel_class_text or '--'}"
+                )
+            if outbound_airplane_text or return_airplane_text:
+                lines.append(
+                    f"- 机型: 去程 {outbound_airplane_text or '--'} / "
+                    f"返程 {return_airplane_text or '--'}"
+                )
+            if price_insights_text:
+                lines.append(f"- Google 价格参考: {price_insights_text}")
+            if outbound_carbon_text or return_carbon_text:
+                lines.append(
+                    f"- 碳排参考: 去程 {outbound_carbon_text or '--'} / "
+                    f"返程 {return_carbon_text or '--'}"
+                )
 
             if depart_text and arrive_text:
                 lines.append(f"- 去程: {depart_text} -> {arrive_text}")
