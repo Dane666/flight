@@ -93,5 +93,15 @@ jobs:
           PY
 
       - name: Run summary monitor
+        env:
+          TRIP_SCRAPE_DEBUG_DIR: artifacts/trip-scrape-debug
         run: |
           python main.py run-best-deals-summary --config config.yaml
+
+      - name: Upload Trip scrape debug artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trip-scrape-debug
+          path: artifacts/trip-scrape-debug
+          if-no-files-found: ignore

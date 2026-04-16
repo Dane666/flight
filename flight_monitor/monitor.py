@@ -109,7 +109,22 @@ class FlightMonitor:
         normalized = text.upper()
         return normalized in {"N/A", "APPROX", "UNKNOWN", "--"}
 
-    def _candidate_is_direct(
+    def _candidate_has_complete_roundtrip(
+        self,
+        candidate: dict[str, str | float | None],
+    ) -> bool:
+        required_keys = (
+            "depart_time",
+            "arrive_time",
+            "return_depart_time",
+            "return_arrive_time",
+        )
+        return all(
+            self._candidate_text_or_none(candidate, key) is not None
+            for key in required_keys
+        )
+
+    def _candidate_is_direct_hint(
         self,
         candidate: dict[str, str | float | None],
     ) -> bool:
@@ -123,6 +138,14 @@ class FlightMonitor:
             if isinstance(value, str) and not self._is_missing_text(value):
                 return False
         return True
+
+    def _candidate_is_direct(
+        self,
+        candidate: dict[str, str | float | None],
+    ) -> bool:
+        return self._candidate_has_complete_roundtrip(
+            candidate
+        ) and self._candidate_is_direct_hint(candidate)
 
     def _extract_layover_hours(self, text: str | None) -> list[float]:
         if not isinstance(text, str) or self._is_missing_text(text):
@@ -241,6 +264,47 @@ class FlightMonitor:
         if not durations:
             return None
         return max(durations)
+
+    def _candidate_signature(
+        self,
+        candidate: dict[str, str | float | None],
+    ) -> tuple[str, str, str, str]:
+        return (
+            str(candidate["origin"]),
+            str(candidate["destination"]),
+            str(candidate["depart_date"]),
+            str(candidate["return_date"]),
+        )
+
+    def _candidate_sort_key(
+        self,
+        candidate: dict[str, str | float | None],
+    ) -> tuple[float, int]:
+        return (
+            float(candidate["converted_price"]),
+            -int(candidate["trip_days"]),
+        )
+
+    def _remember_top_candidates(
+        self,
+        bucket: list[dict[str, str | float | None]],
+        candidate: dict[str, str | float | None],
+        limit: int,
+    ) -> None:
+        signature = self._candidate_signature(candidate)
+        for index, existing in enumerate(bucket):
+            if self._candidate_signature(existing) != signature:
+                continue
+            if self._candidate_sort_key(candidate) < self._candidate_sort_key(
+                existing
+            ):
+                bucket[index] = candidate
+            break
+        else:
+            bucket.append(candidate)
+
+        bucket.sort(key=self._candidate_sort_key)
+        del bucket[limit:]
 
     def _is_candidate_better_pricewise(
         self,
@@ -687,6 +751,7 @@ class FlightMonitor:
             f"provider={self.provider.name} "
             f"queries={scan_stats['queries']} "
             f"hits={scan_stats['hits']} "
+            f"incomplete={scan_stats['incomplete_candidates']} "
             f"elapsed={scan_stats['elapsed_seconds']:.1f}s",
             flush=True,
         )
@@ -719,10 +784,8 @@ class FlightMonitor:
         date_pairs = self._get_scan_date_pairs()
         best_item: dict[str, str | float | None] | None = None
         best_direct_item: dict[str, str | float | None] | None = None
-        best_acceptable_item: dict[str, str | float | None] | None = None
-        best_transfer_within_limit: dict[str, str | float | None] | None = None
-        best_transfer_shortest: dict[str, str | float | None] | None = None
-        best_transfer_shortest_score: tuple[float, float, int] | None = None
+        top_candidates: list[dict[str, str | float | None]] = []
+        direct_hint_candidates: list[dict[str, str | float | None]] = []
         query_count = 0
         hit_count = 0
         started_at = time.monotonic()
@@ -912,49 +975,91 @@ class FlightMonitor:
                             "fx_rate": fx_rate,
                         }
 
-                        if self._candidate_is_direct(candidate):
-                            if self._is_candidate_better_pricewise(
-                                candidate,
-                                best_direct_item,
-                            ):
-                                best_direct_item = candidate
-
-                        max_layover = self._candidate_max_layover_hours(candidate)
-                        if self._candidate_is_direct(candidate) or (
-                            max_layover is None or max_layover <= 3.0
-                        ):
-                            if self._is_candidate_better_pricewise(
-                                candidate,
-                                best_acceptable_item,
-                            ):
-                                best_acceptable_item = candidate
-
-                        if max_layover is not None and max_layover <= 3.0:
-                            if self._is_candidate_better_pricewise(
-                                candidate,
-                                best_transfer_within_limit,
-                            ):
-                                best_transfer_within_limit = candidate
-
-                        layover_score = (
-                            max_layover if max_layover is not None else 999.0
+                        self._remember_top_candidates(
+                            top_candidates,
+                            candidate,
+                            limit=10,
                         )
-                        score = (
-                            layover_score,
-                            float(converted_price),
-                            -int(candidate["trip_days"]),
-                        )
-                        if (
-                            best_transfer_shortest_score is None
-                            or score < best_transfer_shortest_score
-                        ):
-                            best_transfer_shortest_score = score
-                            best_transfer_shortest = candidate
+                        if self._candidate_is_direct_hint(candidate):
+                            self._remember_top_candidates(
+                                direct_hint_candidates,
+                                candidate,
+                                limit=10,
+                            )
         finally:
             if callable(provider_set_fast_scan_mode):
                 provider_set_fast_scan_mode(False)
             if callable(provider_set_verbose):
                 provider_set_verbose(True)
+
+        contender_map: dict[
+            tuple[str, str, str, str],
+            dict[str, str | float | None],
+        ] = {}
+        for contender in top_candidates + direct_hint_candidates:
+            signature = self._candidate_signature(contender)
+            existing = contender_map.get(signature)
+            if existing is None or self._candidate_sort_key(
+                contender
+            ) < self._candidate_sort_key(existing):
+                contender_map[signature] = contender
+
+        enriched_candidates: list[dict[str, str | float | None]] = []
+        incomplete_candidates = 0
+        for contender in sorted(
+            contender_map.values(),
+            key=self._candidate_sort_key,
+        ):
+            enriched = self._enrich_candidate_details(contender)
+            if enriched is None:
+                continue
+            if self._candidate_has_complete_roundtrip(enriched):
+                enriched_candidates.append(enriched)
+            else:
+                incomplete_candidates += 1
+
+        best_acceptable_item: dict[str, str | float | None] | None = None
+        best_transfer_within_limit: dict[str, str | float | None] | None = None
+        best_transfer_shortest: dict[str, str | float | None] | None = None
+        best_transfer_shortest_score: tuple[float, float, int] | None = None
+
+        for candidate in enriched_candidates:
+            if self._candidate_is_direct(candidate):
+                if self._is_candidate_better_pricewise(
+                    candidate,
+                    best_direct_item,
+                ):
+                    best_direct_item = candidate
+
+            max_layover = self._candidate_max_layover_hours(candidate)
+            if self._candidate_is_direct(candidate) or (
+                max_layover is None or max_layover <= 3.0
+            ):
+                if self._is_candidate_better_pricewise(
+                    candidate,
+                    best_acceptable_item,
+                ):
+                    best_acceptable_item = candidate
+
+            if max_layover is not None and max_layover <= 3.0:
+                if self._is_candidate_better_pricewise(
+                    candidate,
+                    best_transfer_within_limit,
+                ):
+                    best_transfer_within_limit = candidate
+
+            layover_score = max_layover if max_layover is not None else 999.0
+            score = (
+                layover_score,
+                float(candidate["converted_price"]),
+                -int(candidate["trip_days"]),
+            )
+            if (
+                best_transfer_shortest_score is None
+                or score < best_transfer_shortest_score
+            ):
+                best_transfer_shortest_score = score
+                best_transfer_shortest = candidate
 
         if best_acceptable_item is not None:
             best_item = best_acceptable_item
@@ -963,19 +1068,6 @@ class FlightMonitor:
         else:
             best_item = best_transfer_shortest
 
-        best_item = self._enrich_candidate_details(best_item)
-        if (
-            best_item is not None
-            and best_direct_item is not None
-            and best_item["origin"] == best_direct_item["origin"]
-            and best_item["destination"] == best_direct_item["destination"]
-            and best_item["depart_date"] == best_direct_item["depart_date"]
-            and best_item["return_date"] == best_direct_item["return_date"]
-        ):
-            best_direct_item = best_item
-        else:
-            best_direct_item = self._enrich_candidate_details(best_direct_item)
-
         elapsed_seconds = time.monotonic() - started_at
         return (
             best_item,
@@ -983,6 +1075,7 @@ class FlightMonitor:
             {
                 "queries": query_count,
                 "hits": hit_count,
+                "incomplete_candidates": incomplete_candidates,
                 "elapsed_seconds": elapsed_seconds,
             },
         )
@@ -1288,9 +1381,11 @@ class FlightMonitor:
             "[SUMMARY-SCAN] "
             f"PQC queries={pqc_scan_stats['queries']} "
             f"hits={pqc_scan_stats['hits']} "
+            f"incomplete={pqc_scan_stats['incomplete_candidates']} "
             f"elapsed={pqc_scan_stats['elapsed_seconds']:.1f}s | "
             f"TH queries={thailand_scan_stats['queries']} "
             f"hits={thailand_scan_stats['hits']} "
+            f"incomplete={thailand_scan_stats['incomplete_candidates']} "
             f"elapsed={thailand_scan_stats['elapsed_seconds']:.1f}s",
             flush=True,
         )

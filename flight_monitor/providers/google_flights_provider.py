@@ -393,6 +393,10 @@ class GoogleFlightsPriceProvider(PriceProvider):
 
         departure_token = outbound_candidate.get("departure_token")
         if not isinstance(departure_token, str) or not departure_token:
+            self._should_fallback = True
+            self._last_error_message = (
+                "Google Flights 缺少 departure_token，无法补抓返程详情"
+            )
             return outbound_price
 
         return_params = dict(params)
@@ -411,6 +415,8 @@ class GoogleFlightsPriceProvider(PriceProvider):
 
         return_candidate = self._pick_best_candidate(return_payload)
         if return_candidate is None:
+            self._should_fallback = True
+            self._last_error_message = "Google Flights 未返回返程详情"
             return outbound_price
 
         return_meta = self._meta_from_candidate(
@@ -448,5 +454,14 @@ class GoogleFlightsPriceProvider(PriceProvider):
                 else None,
             }
         )
+
+        if not (
+            isinstance(self._last_quote_meta.get("return_depart_time"), str)
+            and self._last_quote_meta.get("return_depart_time")
+            and isinstance(self._last_quote_meta.get("return_arrive_time"), str)
+            and self._last_quote_meta.get("return_arrive_time")
+        ):
+            self._should_fallback = True
+            self._last_error_message = "Google Flights 返程时刻缺失"
 
         return float(return_candidate.get("price", outbound_price))

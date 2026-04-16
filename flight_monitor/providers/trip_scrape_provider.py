@@ -1,7 +1,10 @@
 import atexit
+import json
+import os
 import re
 import time
-from datetime import date
+from datetime import date, datetime
+from pathlib import Path
 
 from playwright.sync_api import sync_playwright
 
@@ -60,6 +63,16 @@ class TripScrapePriceProvider(PriceProvider):
     def _log(self, text: str) -> None:
         if self._verbose:
             print(text, flush=True)
+
+    def _debug_root_dir(self) -> Path:
+        raw = os.getenv("TRIP_SCRAPE_DEBUG_DIR", "").strip()
+        if raw:
+            return Path(raw)
+        return Path("data/trip_debug_snapshots")
+
+    def _debug_always_dump(self) -> bool:
+        raw = os.getenv("TRIP_SCRAPE_DEBUG_ALWAYS_DUMP", "").strip().lower()
+        return raw in {"1", "true", "yes", "on"}
 
     def _cleanup_browser(self) -> None:
         context = self._context
@@ -692,6 +705,30 @@ class TripScrapePriceProvider(PriceProvider):
             "return_stopover_details": return_stopover_details,
         }
 
+    def _meta_has_return_details(
+        self,
+        meta: dict[str, str | float | None],
+    ) -> bool:
+        detail_keys = (
+            "return_depart_time",
+            "return_arrive_time",
+            "return_journey",
+            "return_stopovers",
+            "return_stopover_details",
+        )
+        return any(
+            isinstance(meta.get(key), str) and str(meta.get(key)).strip()
+            for key in detail_keys
+        )
+
+    def _page_has_return_context(self, page) -> bool:
+        try:
+            text = page.inner_text("body")
+        except Exception:
+            return False
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        return self._has_returning_section(lines)
+
     def _click_first_if_present(
         self,
         page,
@@ -727,8 +764,174 @@ class TripScrapePriceProvider(PriceProvider):
         except Exception:
             return False
 
-    def _collect_page_snapshot(self, page) -> tuple[str, str]:
-        return page.inner_text("body"), page.content()
+    def _click_selector_if_present(
+        self,
+        page,
+        selector: str,
+        delay_ms: int = 1200,
+    ) -> bool:
+        locator = page.locator(selector)
+        if locator.count() <= 0:
+            return False
+        try:
+            locator.first.click(timeout=2500)
+            page.wait_for_timeout(delay_ms)
+            return True
+        except Exception:
+            return False
+
+    def _collect_page_snapshot(
+        self,
+        page,
+        phase: str,
+    ) -> dict[str, str]:
+        body_text = page.inner_text("body")
+        return {
+            "phase": phase,
+            "text": body_text,
+            "html": page.content(),
+            "url": page.url,
+            "captured_at": datetime.now().isoformat(timespec="seconds"),
+            "has_return_context": "1" if self._page_has_return_context(page) else "0",
+        }
+
+    def _record_page_snapshot(
+        self,
+        snapshots: list[dict[str, str]],
+        page,
+        phase: str,
+    ) -> dict[str, str]:
+        snapshot = self._collect_page_snapshot(page, phase=phase)
+        snapshots.append(snapshot)
+        return snapshot
+
+    def _slugify_debug_value(self, value: str) -> str:
+        return re.sub(r"[^A-Za-z0-9._-]+", "-", value).strip("-") or "unknown"
+
+    def _dump_debug_bundle(
+        self,
+        page,
+        *,
+        origin: str,
+        destination: str,
+        depart_date: date,
+        return_date: date,
+        attempt: int,
+        reason: str,
+        snapshots: list[dict[str, str]] | None,
+        meta: dict[str, str | float | None] | None,
+        price: float | None,
+        error_message: str | None = None,
+    ) -> None:
+        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        route_part = self._slugify_debug_value(
+            f"{origin}-{destination}-{depart_date.isoformat()}-{return_date.isoformat()}"
+        )
+        reason_part = self._slugify_debug_value(reason)
+        dump_dir = (
+            self._debug_root_dir()
+            / f"{timestamp}-{route_part}-attempt{attempt}-{reason_part}"
+        )
+        dump_dir.mkdir(parents=True, exist_ok=True)
+
+        payload = {
+            "origin": origin,
+            "destination": destination,
+            "depart_date": depart_date.isoformat(),
+            "return_date": return_date.isoformat(),
+            "attempt": attempt,
+            "reason": reason,
+            "price": price,
+            "error_message": error_message,
+            "meta": meta or {},
+            "captured_at": datetime.now().isoformat(timespec="seconds"),
+            "page_url": page.url if page is not None else None,
+        }
+        (dump_dir / "meta.json").write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+        for index, snapshot in enumerate(snapshots or [], start=1):
+            base_name = (
+                f"{index:02d}-{self._slugify_debug_value(snapshot.get('phase', 'snapshot'))}"
+            )
+            (dump_dir / f"{base_name}.txt").write_text(
+                snapshot.get("text", ""),
+                encoding="utf-8",
+            )
+            (dump_dir / f"{base_name}.html").write_text(
+                snapshot.get("html", ""),
+                encoding="utf-8",
+            )
+
+        if page is not None:
+            try:
+                page.screenshot(path=str(dump_dir / "page.png"), full_page=True)
+            except Exception:
+                pass
+
+        self._log(f"[SCRAPE-DEBUG] 已落盘调试快照: {dump_dir}")
+
+    def _advance_through_trip_flow(
+        self,
+        page,
+        snapshots: list[dict[str, str]],
+    ) -> None:
+        self._dismiss_blocking_popups(page, snapshots)
+        saw_return_context = self._page_has_return_context(page)
+        select_clicks = 0
+        while select_clicks < 4:
+            if not self._click_first_if_present(page, "Select", delay_ms=3000):
+                break
+            select_clicks += 1
+            snapshot = self._record_page_snapshot(
+                snapshots,
+                page,
+                phase=f"select-{select_clicks}",
+            )
+            has_return_context = snapshot.get("has_return_context") == "1"
+            if has_return_context and saw_return_context:
+                break
+            if has_return_context:
+                saw_return_context = True
+
+        self._dismiss_blocking_popups(page, snapshots)
+        for step_text in (
+            "Included",
+            "Done",
+            "Change Flight",
+            "View details",
+            "Details",
+            "Flight details",
+        ):
+            if self._click_first_if_present(page, step_text, delay_ms=1800):
+                self._record_page_snapshot(
+                    snapshots,
+                    page,
+                    phase=f"cta-{self._slugify_debug_value(step_text.lower())}",
+                )
+
+    def _dismiss_blocking_popups(
+        self,
+        page,
+        snapshots: list[dict[str, str]],
+    ) -> None:
+        selectors = (
+            ".oneTapLogin-c-popup .ich5-x",
+            ".oneTapLogin-c-popup [class*='headerRight']",
+            ".atom__modal_comp [role='button']",
+        )
+        dismissed = False
+        for selector in selectors:
+            if self._click_selector_if_present(page, selector):
+                dismissed = True
+        if dismissed:
+            self._record_page_snapshot(
+                snapshots,
+                page,
+                phase="dismiss-popup",
+            )
 
     def _auto_scroll_to_load(self, page) -> None:
         try:
@@ -779,10 +982,19 @@ class TripScrapePriceProvider(PriceProvider):
         page,
         depart_date: date,
         return_date: date,
-    ) -> tuple[float | None, dict[str, str | float | None]]:
-        snapshots: list[tuple[str, str, str]] = []
-        initial_text, initial_html = self._collect_page_snapshot(page)
-        snapshots.append((initial_text, initial_html, "initial"))
+    ) -> tuple[
+        float | None,
+        dict[str, str | float | None],
+        list[dict[str, str]],
+    ]:
+        snapshots: list[dict[str, str]] = []
+        initial_snapshot = self._record_page_snapshot(
+            snapshots,
+            page,
+            phase="initial",
+        )
+        initial_text = initial_snapshot["text"]
+        initial_html = initial_snapshot["html"]
         calendar_price = self._extract_roundtrip_calendar_price(
             page_text=initial_text,
             depart_date=depart_date,
@@ -790,44 +1002,24 @@ class TripScrapePriceProvider(PriceProvider):
         )
 
         if not self._fast_scan_mode:
-            if self._click_first_if_present(page, "Select", delay_ms=3500):
-                text, html = self._collect_page_snapshot(page)
-                snapshots.append((text, html, "selected"))
-
-                if self._click_nth_if_present(page, "Select", index=1, delay_ms=3500):
-                    text, html = self._collect_page_snapshot(page)
-                    snapshots.append((text, html, "selected"))
-
-                if self._click_first_if_present(
-                    page,
-                    "Change Flight",
-                    delay_ms=2500,
-                ):
-                    text, html = self._collect_page_snapshot(page)
-                    snapshots.append((text, html, "selected"))
+            self._advance_through_trip_flow(page, snapshots)
 
         self._auto_scroll_to_load(page)
-        text, html = self._collect_page_snapshot(page)
-        snapshots.append((text, html, "scrolled"))
-
-        if not self._fast_scan_mode:
-            for step_text in (
-                "Included",
-                "Change Flight",
-                "View details",
-                "Details",
-                "Flight details",
-            ):
-                if self._click_first_if_present(page, step_text, delay_ms=1800):
-                    text, html = self._collect_page_snapshot(page)
-                    snapshots.append((text, html, "selected"))
+        self._record_page_snapshot(
+            snapshots,
+            page,
+            phase="scrolled",
+        )
 
         best_price: float | None = None
         best_meta: dict[str, str | float | None] = {}
 
-        for text, html, phase in snapshots:
+        for snapshot in snapshots:
+            text = snapshot["text"]
+            html = snapshot["html"]
+            phase = snapshot["phase"]
             phase_prices: list[float] = []
-            if phase in {"selected", "scrolled"}:
+            if phase != "initial":
                 price = self._extract_result_list_price(text)
                 if price is not None:
                     phase_prices.append(price)
@@ -845,8 +1037,8 @@ class TripScrapePriceProvider(PriceProvider):
                 best_price = price
                 best_meta = extended_meta
             elif best_meta == {} or (
-                not best_meta.get("return_depart_time")
-                and extended_meta.get("return_depart_time")
+                not self._meta_has_return_details(best_meta)
+                and self._meta_has_return_details(extended_meta)
             ):
                 best_meta = extended_meta
 
@@ -859,7 +1051,7 @@ class TripScrapePriceProvider(PriceProvider):
                     page=page,
                 )
 
-        return best_price, best_meta
+        return best_price, best_meta, snapshots
 
     def get_last_quote_meta(self) -> dict[str, str | float | None]:
         return dict(self._last_quote_meta)
@@ -890,6 +1082,9 @@ class TripScrapePriceProvider(PriceProvider):
                 context = self._ensure_context()
                 page = context.new_page()
                 page.set_default_timeout(self._timeout_seconds * 1000)
+                snapshots: list[dict[str, str]] = []
+                price: float | None = None
+                meta: dict[str, str | float | None] = {}
                 try:
                     page.goto(
                         url,
@@ -897,17 +1092,62 @@ class TripScrapePriceProvider(PriceProvider):
                         timeout=self._timeout_seconds * 1000,
                     )
                     self._wait_for_search_results(page)
-                    price, meta = self._extract_from_loaded_page(
+                    price, meta, snapshots = self._extract_from_loaded_page(
                         page,
                         depart_date=depart_date,
                         return_date=return_date,
                     )
+                    if self._debug_always_dump() or (
+                        price is not None and not self._meta_has_return_details(meta)
+                    ):
+                        self._dump_debug_bundle(
+                            page,
+                            origin=origin,
+                            destination=destination,
+                            depart_date=depart_date,
+                            return_date=return_date,
+                            attempt=attempt,
+                            reason=(
+                                "always"
+                                if self._debug_always_dump()
+                                else "missing-return-details"
+                            ),
+                            snapshots=snapshots,
+                            meta=meta,
+                            price=price,
+                        )
                 finally:
                     try:
                         page.close()
                     except Exception:
                         pass
             except Exception as error:
+                page_ref = page if "page" in locals() else None
+                snapshots_ref = snapshots if "snapshots" in locals() else []
+                meta_ref = meta if "meta" in locals() else {}
+                price_ref = price if "price" in locals() else None
+                try:
+                    if page_ref is not None and not snapshots_ref:
+                        self._record_page_snapshot(
+                            snapshots_ref,
+                            page_ref,
+                            phase="exception",
+                        )
+                    self._dump_debug_bundle(
+                        page_ref,
+                        origin=origin,
+                        destination=destination,
+                        depart_date=depart_date,
+                        return_date=return_date,
+                        attempt=attempt,
+                        reason="exception",
+                        snapshots=snapshots_ref,
+                        meta=meta_ref,
+                        price=price_ref,
+                        error_message=str(error),
+                    )
+                except Exception:
+                    pass
                 self._cleanup_browser()
                 self._log(
                     "[WARN] Trip 抓取失败 "
@@ -931,6 +1171,21 @@ class TripScrapePriceProvider(PriceProvider):
                 f"{origin}->{destination} {depart_date}/{return_date} "
                 f"attempt={attempt}"
             )
+            try:
+                self._dump_debug_bundle(
+                    page,
+                    origin=origin,
+                    destination=destination,
+                    depart_date=depart_date,
+                    return_date=return_date,
+                    attempt=attempt,
+                    reason="missing-price",
+                    snapshots=snapshots,
+                    meta=meta,
+                    price=price,
+                )
+            except Exception:
+                pass
             time.sleep(min(attempt * 1.5, 5))
 
         return None
