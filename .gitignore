@@ -5,3 +5,6 @@ __pycache__/
 .venv/
 data/
 config.yaml
+tmp/
+output/
+tools/
