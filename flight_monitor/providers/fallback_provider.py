@@ -83,15 +83,6 @@ class FallbackPriceProvider(PriceProvider):
         return_date: date,
         currency: str,
     ) -> float | None:
-        if self._using_fallback:
-            return self._fallback.get_roundtrip_price(
-                origin=origin,
-                destination=destination,
-                depart_date=depart_date,
-                return_date=return_date,
-                currency=currency,
-            )
-
         price = self._primary.get_roundtrip_price(
             origin=origin,
             destination=destination,
@@ -107,6 +98,12 @@ class FallbackPriceProvider(PriceProvider):
                 depart_date=depart_date,
                 return_date=return_date,
                 currency=currency,
+            )
+
+        if self._using_fallback:
+            self._using_fallback = False
+            self._log(
+                f"[PROVIDER] {self._primary.name} 已恢复，切回主 provider"
             )
 
         self._active_provider = self._primary

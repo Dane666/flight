@@ -3,7 +3,7 @@ from datetime import date, datetime, timedelta
 import re
 
 from flight_monitor.config import AppConfig
-from flight_monitor.date_utils import dragon_boat_holiday_span
+from flight_monitor.date_utils import get_festival_span
 from flight_monitor.fx import FxConverter
 from flight_monitor.models import PriceQuote, Route
 from flight_monitor.notifier import (
@@ -546,7 +546,9 @@ class FlightMonitor:
             window_start = self.config.window_start
             window_end = self.config.window_end
 
-        holiday_start, holiday_end = dragon_boat_holiday_span(window_start.year)
+        holiday_start, holiday_end = get_festival_span(
+            self.config.festival, window_start.year
+        )
 
         pairs = build_roundtrip_pairs(
             window_start=window_start,
@@ -569,7 +571,7 @@ class FlightMonitor:
         raise ValueError("没有可用的去返日期组合")
 
     def _get_required_holiday_span(self) -> tuple[date, date]:
-        return dragon_boat_holiday_span(self.config.window_start.year)
+        return get_festival_span(self.config.festival, self.config.window_start.year)
 
     def run_once(self, quick: bool = False) -> None:
         print("[RUN] 开始执行 run-once", flush=True)

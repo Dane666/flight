@@ -1,10 +1,10 @@
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 import yaml
 
-from flight_monitor.date_utils import around_day_window, dragon_boat_date
+from flight_monitor.date_utils import get_festival_span
 
 
 @dataclass(frozen=True)
@@ -44,12 +44,17 @@ class AppConfig:
     min_trip_days: int
     max_trip_span_days: int
     max_leave_workdays: int
+    festival: str
 
 
-def create_default_config(year: int | None = None) -> AppConfig:
+def create_default_config(
+    year: int | None = None,
+    festival: str = "dragon_boat",
+) -> AppConfig:
     monitor_year = year or date.today().year
-    dragon_boat = dragon_boat_date(monitor_year)
-    start, end = around_day_window(dragon_boat, days=5)
+    holiday_start, holiday_end = get_festival_span(festival, monitor_year)
+    start = holiday_start - timedelta(days=5)
+    end = holiday_end + timedelta(days=5)
     return AppConfig(
         provider="mock",
         serpapi_api_key=None,
@@ -86,6 +91,7 @@ def create_default_config(year: int | None = None) -> AppConfig:
         min_trip_days=4,
         max_trip_span_days=6,
         max_leave_workdays=3,
+        festival=festival,
     )
 
 
@@ -155,6 +161,7 @@ def load_config(config_path: Path) -> AppConfig:
         min_trip_days=int(payload.get("min_trip_days", 4)),
         max_trip_span_days=int(payload.get("max_trip_span_days", 6)),
         max_leave_workdays=int(payload.get("max_leave_workdays", 3)),
+        festival=payload.get("festival", "dragon_boat"),
     )
 
 
@@ -204,6 +211,7 @@ def save_config(config: AppConfig, output_path: Path) -> None:
         "min_trip_days": config.min_trip_days,
         "max_trip_span_days": config.max_trip_span_days,
         "max_leave_workdays": config.max_leave_workdays,
+        "festival": config.festival,
     }
     with output_path.open("w", encoding="utf-8") as file:
         yaml.safe_dump(payload, file, allow_unicode=True, sort_keys=False)
