@@ -780,6 +780,57 @@ class TripScrapePriceProvider(PriceProvider):
         except Exception:
             return False
 
+    def _click_first_visible_selector(
+        self,
+        page,
+        selectors: tuple[str, ...],
+        delay_ms: int = 2200,
+    ) -> str | None:
+        for selector in selectors:
+            locator = page.locator(selector)
+            count = locator.count()
+            if count <= 0:
+                continue
+            for index in range(count):
+                try:
+                    target = locator.nth(index)
+                    if not target.is_visible():
+                        continue
+                    target.click(timeout=4500)
+                    page.wait_for_timeout(delay_ms)
+                    return selector
+                except Exception:
+                    continue
+        return None
+
+    def _wait_for_return_context(
+        self,
+        page,
+        timeout_ms: int = 9000,
+    ) -> bool:
+        deadline = time.monotonic() + (timeout_ms / 1000)
+        while time.monotonic() < deadline:
+            if self._page_has_return_context(page):
+                return True
+            page.wait_for_timeout(500)
+        return self._page_has_return_context(page)
+
+    def _click_departure_result_card(
+        self,
+        page,
+    ) -> str | None:
+        card_selectors = (
+            '[testid^="1_flightlist_card_"]',
+            '[testid^="1_flightlist_minicard_"]',
+            '[testid^="flightlist_card_"]',
+            '[testid^="flightlist_minicard_"]',
+        )
+        return self._click_first_visible_selector(
+            page,
+            selectors=card_selectors,
+            delay_ms=2800,
+        )
+
     def _collect_page_snapshot(
         self,
         page,
@@ -879,22 +930,36 @@ class TripScrapePriceProvider(PriceProvider):
         snapshots: list[dict[str, str]],
     ) -> None:
         self._dismiss_blocking_popups(page, snapshots)
-        saw_return_context = self._page_has_return_context(page)
-        select_clicks = 0
-        while select_clicks < 4:
-            if not self._click_first_if_present(page, "Select", delay_ms=3000):
-                break
-            select_clicks += 1
+        if self._page_has_return_context(page):
+            return
+
+        card_selector = self._click_departure_result_card(page)
+        if card_selector is not None:
+            self._wait_for_return_context(page)
             snapshot = self._record_page_snapshot(
                 snapshots,
                 page,
-                phase=f"select-{select_clicks}",
+                phase=(
+                    "select-departure-card-"
+                    f"{self._slugify_debug_value(card_selector)}"
+                ),
             )
-            has_return_context = snapshot.get("has_return_context") == "1"
-            if has_return_context and saw_return_context:
+            if snapshot.get("has_return_context") == "1":
+                return
+
+        for attempt in range(1, 5):
+            if self._page_has_return_context(page):
                 break
-            if has_return_context:
-                saw_return_context = True
+            if not self._click_first_if_present(page, "Select", delay_ms=3000):
+                break
+            self._wait_for_return_context(page, timeout_ms=5000)
+            snapshot = self._record_page_snapshot(
+                snapshots,
+                page,
+                phase=f"select-{attempt}",
+            )
+            if snapshot.get("has_return_context") == "1":
+                break
 
         self._dismiss_blocking_popups(page, snapshots)
         for step_text in (
@@ -1030,6 +1095,15 @@ class TripScrapePriceProvider(PriceProvider):
             if self._fast_scan_mode:
                 if best_price is None or price < best_price:
                     best_price = price
+                    best_meta = self._extract_extended_meta(text, html, page=page)
+                elif best_meta == {}:
+                    candidate_meta = self._extract_extended_meta(
+                        text, html, page=page
+                    )
+                    if candidate_meta != {} and not self._meta_has_return_details(
+                        best_meta
+                    ) and self._meta_has_return_details(candidate_meta):
+                        best_meta = candidate_meta
                 continue
 
             extended_meta = self._extract_extended_meta(text, html, page=page)

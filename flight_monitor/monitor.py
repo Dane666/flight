@@ -1007,6 +1007,7 @@ class FlightMonitor:
                 contender_map[signature] = contender
 
         enriched_candidates: list[dict[str, str | float | None]] = []
+        enriched_incomplete: list[dict[str, str | float | None]] = []
         incomplete_candidates = 0
         for contender in sorted(
             contender_map.values(),
@@ -1018,14 +1019,19 @@ class FlightMonitor:
             if self._candidate_has_complete_roundtrip(enriched):
                 enriched_candidates.append(enriched)
             else:
+                enriched_incomplete.append(enriched)
                 incomplete_candidates += 1
+
+        candidates_to_evaluate = (
+            enriched_candidates if enriched_candidates else enriched_incomplete
+        )
 
         best_acceptable_item: dict[str, str | float | None] | None = None
         best_transfer_within_limit: dict[str, str | float | None] | None = None
         best_transfer_shortest: dict[str, str | float | None] | None = None
         best_transfer_shortest_score: tuple[float, float, int] | None = None
 
-        for candidate in enriched_candidates:
+        for candidate in candidates_to_evaluate:
             if self._candidate_is_direct(candidate):
                 if self._is_candidate_better_pricewise(
                     candidate,
