@@ -13,7 +13,7 @@ on:
 jobs:
   run-monitor:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 90
 
     steps:
       - name: Checkout
@@ -61,10 +61,7 @@ jobs:
           obj["notifier"] = "feishu" if feishu_webhook else "console"
           obj["feishu_webhook_url"] = feishu_webhook
           obj["feishu_secret"] = feishu_secret
-          obj["thailand_destinations"] = obj.get(
-              "thailand_destinations",
-              ["BKK", "DMK", "HKT", "CNX", "KBV"],
-          )
+          obj["thailand_destinations"] = ["BKK"]  # 仅BKK加速CI
           obj["origins"] = obj.get("origins", ["HKG"])
 
           path.write_text(
@@ -94,7 +91,7 @@ jobs:
             --depart-date 2026-10-01 --return-date 2026-10-07 \
             --window-days 1 --label "国庆"
 
-      # 中秋+国庆桥 请假3天 0924-1007
+      # 中秋+国庆桥 请假3天 0924-1007 (window=1 减少查询对数)
       - name: Search Mid-Autumn & National Day Bridge
         env:
           TRIP_SCRAPE_DEBUG_DIR: artifacts/trip-scrape-bridge
@@ -102,9 +99,9 @@ jobs:
           python main.py search \
             --origin HKG --destination PQC \
             --depart-date 2026-09-25 --return-date 2026-10-07 \
-            --window-days 2 --label "中秋国庆桥-请假3天"
+            --window-days 1 --label "中秋国庆桥-请假3天"
 
-      # 春节 前后一两天
+      # 春节 前后一两天 (window=1 加速)
       - name: Search Spring Festival
         env:
           TRIP_SCRAPE_DEBUG_DIR: artifacts/trip-scrape-spring
@@ -112,9 +109,9 @@ jobs:
           python main.py search \
             --origin HKG --destination PQC \
             --depart-date 2027-02-15 --return-date 2027-02-22 \
-            --window-days 2 --label "春节"
+            --window-days 1 --label "春节"
 
-      # 春节特价 0207-0210
+      # 春节特价 0207-0210 (window=1 加速)
       - name: Search Spring Festival Deal
         env:
           TRIP_SCRAPE_DEBUG_DIR: artifacts/trip-scrape-spring-deal
@@ -122,7 +119,7 @@ jobs:
           python main.py search \
             --origin HKG --destination PQC \
             --depart-date 2027-02-07 --return-date 2027-02-10 \
-            --window-days 2 --label "春节特价"
+            --window-days 1 --label "春节特价"
 
       - name: Upload Trip scrape debug artifacts
         if: always()
