@@ -20,22 +20,27 @@ jobs:
             depart: 2026-09-24
             return: 2026-09-27
             window: 1
+            min_trip: 0
           - label: 国庆
             depart: 2026-10-01
             return: 2026-10-07
             window: 1
+            min_trip: 0
           - label: 中秋国庆桥-请假3天
             depart: 2026-09-25
             return: 2026-10-07
             window: 1
+            min_trip: 5
           - label: 春节
             depart: 2027-02-15
             return: 2027-02-22
             window: 1
+            min_trip: 0
           - label: 春节特价
             depart: 2027-02-07
             return: 2027-02-10
             window: 1
+            min_trip: 0
 
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -100,7 +105,8 @@ jobs:
           python main.py search \
             --origin HKG --destination PQC \
             --depart-date ${{ matrix.depart }} --return-date ${{ matrix.return }} \
-            --window-days ${{ matrix.window }} --label "${{ matrix.label }}"
+            --window-days ${{ matrix.window }} --label "${{ matrix.label }}" \
+            --min-trip-days ${{ matrix.min_trip }}
 
       - name: Upload debug artifacts
         if: always()

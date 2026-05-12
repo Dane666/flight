@@ -180,6 +180,7 @@ def cmd_search(args: argparse.Namespace) -> None:
         return_date=date.fromisoformat(args.return_date),
         window_days=args.window_days,
         label=args.label or "",
+        min_trip_days=args.min_trip_days or None,
     )
 
 
@@ -255,6 +256,12 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=2,
         help="出发/返程前后滑动窗口天数，默认 2",
+    )
+    search_parser.add_argument(
+        "--min-trip-days",
+        type=int,
+        default=0,
+        help="最小行程天数，默认取自配置 min_trip_days",
     )
     search_parser.add_argument(
         "--label", default="", help="搜索标签，会出现在飞书标题中"

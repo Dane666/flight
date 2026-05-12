@@ -1635,6 +1635,7 @@ class FlightMonitor:
         return_date: date,
         window_days: int = 2,
         label: str = "",
+        min_trip_days: int | None = None,
     ) -> None:
         """单次手工搜索：多目的地对比，滑动窗口检索。
         """
@@ -1644,7 +1645,11 @@ class FlightMonitor:
         pairs = build_roundtrip_pairs(
             window_start=win_start,
             window_end=win_end,
-            min_trip_days=self.config.min_trip_days,
+            min_trip_days=(
+                min_trip_days
+                if min_trip_days is not None
+                else self.config.min_trip_days
+            ),
         )
         if not pairs:
             print(
