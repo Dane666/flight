@@ -163,9 +163,19 @@ def cmd_run_best_deals_summary(args: argparse.Namespace) -> None:
 
 def cmd_search(args: argparse.Namespace) -> None:
     monitor = build_monitor(Path(args.config))
+    destinations = [args.destination.upper()]
+    if not args.no_thailand:
+        destinations.extend(monitor.config.thailand_destinations)
+    # deduplicate while preserving order
+    seen: set[str] = set()
+    unique: list[str] = []
+    for d in destinations:
+        if d not in seen:
+            seen.add(d)
+            unique.append(d)
     monitor.run_custom_search(
         origin=args.origin.upper(),
-        destination=args.destination.upper(),
+        destinations=unique,
         depart_date=date.fromisoformat(args.depart_date),
         return_date=date.fromisoformat(args.return_date),
         window_days=args.window_days,
@@ -248,6 +258,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     search_parser.add_argument(
         "--label", default="", help="搜索标签，会出现在飞书标题中"
+    )
+    search_parser.add_argument(
+        "--no-thailand",
+        action="store_true",
+        help="不搜索泰国目的地，仅搜索 --destination 指定的目的地",
     )
     search_parser.set_defaults(func=cmd_search)
 

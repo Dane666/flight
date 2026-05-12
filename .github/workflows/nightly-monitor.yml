@@ -61,6 +61,11 @@ jobs:
           obj["notifier"] = "feishu" if feishu_webhook else "console"
           obj["feishu_webhook_url"] = feishu_webhook
           obj["feishu_secret"] = feishu_secret
+          obj["thailand_destinations"] = obj.get(
+              "thailand_destinations",
+              ["BKK", "DMK", "HKT", "CNX", "KBV"],
+          )
+          obj["origins"] = obj.get("origins", ["HKG"])
 
           path.write_text(
               yaml.safe_dump(obj, allow_unicode=True, sort_keys=False),
