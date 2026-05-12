@@ -1,4 +1,5 @@
 import argparse
+from datetime import date
 from pathlib import Path
 import sys
 
@@ -160,6 +161,18 @@ def cmd_run_best_deals_summary(args: argparse.Namespace) -> None:
     monitor.run_best_deals_summary()
 
 
+def cmd_search(args: argparse.Namespace) -> None:
+    monitor = build_monitor(Path(args.config))
+    monitor.run_custom_search(
+        origin=args.origin.upper(),
+        destination=args.destination.upper(),
+        depart_date=date.fromisoformat(args.depart_date),
+        return_date=date.fromisoformat(args.return_date),
+        window_days=args.window_days,
+        label=args.label or "",
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="机票价格监控")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -207,6 +220,36 @@ def build_parser() -> argparse.ArgumentParser:
         "--config", default="config.yaml", help="配置文件路径"
     )
     deals_summary_parser.set_defaults(func=cmd_run_best_deals_summary)
+
+    search_parser = subparsers.add_parser(
+        "search",
+        help="单次手工搜索：指定出发地/目的地/日期+滑动窗口",
+    )
+    search_parser.add_argument(
+        "--config", default="config.yaml", help="配置文件路径"
+    )
+    search_parser.add_argument(
+        "--origin", required=True, help="出发地 IATA 码，如 HKG"
+    )
+    search_parser.add_argument(
+        "--destination", required=True, help="目的地 IATA 码，如 PQC"
+    )
+    search_parser.add_argument(
+        "--depart-date", required=True, help="出发日期 YYYY-MM-DD"
+    )
+    search_parser.add_argument(
+        "--return-date", required=True, help="返程日期 YYYY-MM-DD"
+    )
+    search_parser.add_argument(
+        "--window-days",
+        type=int,
+        default=2,
+        help="出发/返程前后滑动窗口天数，默认 2",
+    )
+    search_parser.add_argument(
+        "--label", default="", help="搜索标签，会出现在飞书标题中"
+    )
+    search_parser.set_defaults(func=cmd_search)
 
     return parser
 

@@ -39,19 +39,16 @@ jobs:
           FEISHU_SECRET: ${{ secrets.FEISHU_SECRET }}
         run: |
           python main.py init-config --force
-          echo "Generated default config.yaml from repository defaults"
+          echo "Generated default config.yaml"
 
           python - <<'PY'
           from pathlib import Path
-          import os
-          import sys
-          import yaml
+          import os, yaml
 
           path = Path("config.yaml")
           obj = yaml.safe_load(path.read_text(encoding="utf-8"))
           if isinstance(obj, str):
               obj = yaml.safe_load(obj)
-          assert isinstance(obj, dict), f"Invalid config type: {type(obj).__name__}"
 
           feishu_webhook = os.getenv("FEISHU_WEBHOOK_URL")
           feishu_secret = os.getenv("FEISHU_SECRET")
@@ -61,10 +58,7 @@ jobs:
           obj["trip_scrape_timeout_seconds"] = int(
               obj.get("trip_scrape_timeout_seconds", 60)
           )
-          obj["notifier"] = "feishu" if feishu_webhook else obj.get(
-              "notifier",
-              "console",
-          )
+          obj["notifier"] = "feishu" if feishu_webhook else "console"
           obj["feishu_webhook_url"] = feishu_webhook
           obj["feishu_secret"] = feishu_secret
 
@@ -72,24 +66,63 @@ jobs:
               yaml.safe_dump(obj, allow_unicode=True, sort_keys=False),
               encoding="utf-8",
           )
-          print(
-              "config.yaml ready, "
-              f"provider={obj.get('provider')}, "
-              f"notifier={obj.get('notifier')}, "
-              f"window={obj.get('window_start')}/{obj.get('window_end')}"
-          )
+          print(f"config.yaml ready, provider={obj.get('provider')}")
           PY
 
-      - name: Run summary monitor
+      # 中秋节 前后一天
+      - name: Search Mid-Autumn
         env:
-          TRIP_SCRAPE_DEBUG_DIR: artifacts/trip-scrape-debug
+          TRIP_SCRAPE_DEBUG_DIR: artifacts/trip-scrape-mid-autumn
         run: |
-          python main.py run-best-deals-summary --config config.yaml
+          python main.py search \
+            --origin HKG --destination PQC \
+            --depart-date 2026-09-24 --return-date 2026-09-27 \
+            --window-days 1 --label "中秋"
+
+      # 国庆节 前后一天
+      - name: Search National Day
+        env:
+          TRIP_SCRAPE_DEBUG_DIR: artifacts/trip-scrape-national-day
+        run: |
+          python main.py search \
+            --origin HKG --destination PQC \
+            --depart-date 2026-10-01 --return-date 2026-10-07 \
+            --window-days 1 --label "国庆"
+
+      # 中秋+国庆桥 请假3天 0924-1007
+      - name: Search Mid-Autumn & National Day Bridge
+        env:
+          TRIP_SCRAPE_DEBUG_DIR: artifacts/trip-scrape-bridge
+        run: |
+          python main.py search \
+            --origin HKG --destination PQC \
+            --depart-date 2026-09-25 --return-date 2026-10-07 \
+            --window-days 2 --label "中秋国庆桥-请假3天"
+
+      # 春节 前后一两天
+      - name: Search Spring Festival
+        env:
+          TRIP_SCRAPE_DEBUG_DIR: artifacts/trip-scrape-spring
+        run: |
+          python main.py search \
+            --origin HKG --destination PQC \
+            --depart-date 2027-02-15 --return-date 2027-02-22 \
+            --window-days 2 --label "春节"
+
+      # 春节特价 0207-0210
+      - name: Search Spring Festival Deal
+        env:
+          TRIP_SCRAPE_DEBUG_DIR: artifacts/trip-scrape-spring-deal
+        run: |
+          python main.py search \
+            --origin HKG --destination PQC \
+            --depart-date 2027-02-07 --return-date 2027-02-10 \
+            --window-days 2 --label "春节特价"
 
       - name: Upload Trip scrape debug artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: trip-scrape-debug
-          path: artifacts/trip-scrape-debug
+          path: artifacts/trip-scrape-*
           if-no-files-found: ignore

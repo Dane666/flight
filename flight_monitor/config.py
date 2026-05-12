@@ -49,12 +49,17 @@ class AppConfig:
 
 def create_default_config(
     year: int | None = None,
-    festival: str = "dragon_boat",
+    festival: str = "none",
 ) -> AppConfig:
     monitor_year = year or date.today().year
-    holiday_start, holiday_end = get_festival_span(festival, monitor_year)
-    start = holiday_start - timedelta(days=5)
-    end = holiday_end + timedelta(days=5)
+    if festival != "none":
+        holiday_start, holiday_end = get_festival_span(festival, monitor_year)
+        start = holiday_start - timedelta(days=5)
+        end = holiday_end + timedelta(days=5)
+    else:
+        today = date.today()
+        start = today + timedelta(days=1)
+        end = today + timedelta(days=10)
     return AppConfig(
         provider="mock",
         serpapi_api_key=None,
