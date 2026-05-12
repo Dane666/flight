@@ -61,7 +61,7 @@ jobs:
           obj["notifier"] = "feishu" if feishu_webhook else "console"
           obj["feishu_webhook_url"] = feishu_webhook
           obj["feishu_secret"] = feishu_secret
-          obj["thailand_destinations"] = ["BKK"]  # 仅BKK加速CI
+          obj["thailand_destinations"] = ["BKK", "DMK", "HKT"]
           obj["origins"] = obj.get("origins", ["HKG"])
 
           path.write_text(
