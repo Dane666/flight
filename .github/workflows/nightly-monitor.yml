@@ -11,9 +11,34 @@ on:
   workflow_dispatch:
 
 jobs:
-  run-monitor:
+  search:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: 中秋
+            depart: 2026-09-24
+            return: 2026-09-27
+            window: 1
+          - label: 国庆
+            depart: 2026-10-01
+            return: 2026-10-07
+            window: 1
+          - label: 中秋国庆桥-请假3天
+            depart: 2026-09-25
+            return: 2026-10-07
+            window: 1
+          - label: 春节
+            depart: 2027-02-15
+            return: 2027-02-22
+            window: 1
+          - label: 春节特价
+            depart: 2027-02-07
+            return: 2027-02-10
+            window: 1
+
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 30
 
     steps:
       - name: Checkout
@@ -39,7 +64,6 @@ jobs:
           FEISHU_SECRET: ${{ secrets.FEISHU_SECRET }}
         run: |
           python main.py init-config --force
-          echo "Generated default config.yaml"
 
           python - <<'PY'
           from pathlib import Path
@@ -55,14 +79,12 @@ jobs:
 
           obj["provider"] = "trip_scrape"
           obj["currency"] = obj.get("currency", "CNY")
-          obj["trip_scrape_timeout_seconds"] = int(
-              obj.get("trip_scrape_timeout_seconds", 60)
-          )
+          obj["trip_scrape_timeout_seconds"] = 60
           obj["notifier"] = "feishu" if feishu_webhook else "console"
           obj["feishu_webhook_url"] = feishu_webhook
           obj["feishu_secret"] = feishu_secret
           obj["thailand_destinations"] = ["BKK", "DMK", "HKT"]
-          obj["origins"] = obj.get("origins", ["HKG"])
+          obj["origins"] = ["HKG"]
 
           path.write_text(
               yaml.safe_dump(obj, allow_unicode=True, sort_keys=False),
@@ -71,60 +93,19 @@ jobs:
           print(f"config.yaml ready, provider={obj.get('provider')}")
           PY
 
-      # 中秋节 前后一天
-      - name: Search Mid-Autumn
+      - name: Search ${{ matrix.label }}
         env:
-          TRIP_SCRAPE_DEBUG_DIR: artifacts/trip-scrape-mid-autumn
+          TRIP_SCRAPE_DEBUG_DIR: artifacts/trip-scrape-${{ matrix.label }}
         run: |
           python main.py search \
             --origin HKG --destination PQC \
-            --depart-date 2026-09-24 --return-date 2026-09-27 \
-            --window-days 1 --label "中秋"
+            --depart-date ${{ matrix.depart }} --return-date ${{ matrix.return }} \
+            --window-days ${{ matrix.window }} --label "${{ matrix.label }}"
 
-      # 国庆节 前后一天
-      - name: Search National Day
-        env:
-          TRIP_SCRAPE_DEBUG_DIR: artifacts/trip-scrape-national-day
-        run: |
-          python main.py search \
-            --origin HKG --destination PQC \
-            --depart-date 2026-10-01 --return-date 2026-10-07 \
-            --window-days 1 --label "国庆"
-
-      # 中秋+国庆桥 请假3天 0924-1007 (window=1 减少查询对数)
-      - name: Search Mid-Autumn & National Day Bridge
-        env:
-          TRIP_SCRAPE_DEBUG_DIR: artifacts/trip-scrape-bridge
-        run: |
-          python main.py search \
-            --origin HKG --destination PQC \
-            --depart-date 2026-09-25 --return-date 2026-10-07 \
-            --window-days 1 --label "中秋国庆桥-请假3天"
-
-      # 春节 前后一两天 (window=1 加速)
-      - name: Search Spring Festival
-        env:
-          TRIP_SCRAPE_DEBUG_DIR: artifacts/trip-scrape-spring
-        run: |
-          python main.py search \
-            --origin HKG --destination PQC \
-            --depart-date 2027-02-15 --return-date 2027-02-22 \
-            --window-days 1 --label "春节"
-
-      # 春节特价 0207-0210 (window=1 加速)
-      - name: Search Spring Festival Deal
-        env:
-          TRIP_SCRAPE_DEBUG_DIR: artifacts/trip-scrape-spring-deal
-        run: |
-          python main.py search \
-            --origin HKG --destination PQC \
-            --depart-date 2027-02-07 --return-date 2027-02-10 \
-            --window-days 1 --label "春节特价"
-
-      - name: Upload Trip scrape debug artifacts
+      - name: Upload debug artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: trip-scrape-debug
-          path: artifacts/trip-scrape-*
+          name: trip-scrape-${{ matrix.label }}
+          path: artifacts/trip-scrape-${{ matrix.label }}
           if-no-files-found: ignore
