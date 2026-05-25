@@ -5,9 +5,7 @@ on:
     branches:
       - main
   schedule:
-    - cron: '0 1 * * 1-5' # 工作日 09:00 (UTC+8)
-    - cron: '0 10 * * 1-5' # 工作日 18:00 (UTC+8)
-    - cron: '0 2 * * 0,6' # 周末 10:00 (UTC+8)
+    - cron: '0 17 * * *' # 每天凌晨 01:00 (UTC+8) — 航司夜间复盘库存，特价票释放高峰
   workflow_dispatch:
 
 jobs:
