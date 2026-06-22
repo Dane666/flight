@@ -25,6 +25,7 @@ class TripScrapePriceProvider(PriceProvider):
         "SZX": "shenzhen",
         "HKG": "hong-kong",
         "PQC": "phu-quoc-island",
+        "OKA": "okinawa",
     }
     stopover_ignore_phrases = (
         "save money",

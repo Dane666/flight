@@ -19,26 +19,52 @@ jobs:
             return: 2026-09-27
             window: 1
             min_trip: 0
+            origin: HKG
+            dest: PQC
           - label: 国庆
             depart: 2026-10-01
             return: 2026-10-07
             window: 1
             min_trip: 0
+            origin: HKG
+            dest: PQC
           - label: 中秋国庆桥-请假3天
             depart: 2026-09-25
             return: 2026-10-07
             window: 1
             min_trip: 5
+            origin: HKG
+            dest: PQC
           - label: 春节
             depart: 2027-02-15
             return: 2027-02-22
             window: 1
             min_trip: 0
+            origin: HKG
+            dest: PQC
           - label: 春节特价
             depart: 2027-02-07
             return: 2027-02-10
             window: 1
             min_trip: 0
+            origin: HKG
+            dest: PQC
+          - label: 中秋那霸-广州
+            depart: 2026-09-24
+            return: 2026-09-27
+            window: 1
+            min_trip: 0
+            origin: CAN
+            dest: OKA
+            no_thailand: " --no-thailand"
+          - label: 中秋那霸-香港
+            depart: 2026-09-24
+            return: 2026-09-27
+            window: 1
+            min_trip: 0
+            origin: HKG
+            dest: OKA
+            no_thailand: " --no-thailand"
 
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -101,10 +127,10 @@ jobs:
           TRIP_SCRAPE_DEBUG_DIR: artifacts/trip-scrape-${{ matrix.label }}
         run: |
           python main.py search \
-            --origin HKG --destination PQC \
+            --origin ${{ matrix.origin }} --destination ${{ matrix.dest }} \
             --depart-date ${{ matrix.depart }} --return-date ${{ matrix.return }} \
             --window-days ${{ matrix.window }} --label "${{ matrix.label }}" \
-            --min-trip-days ${{ matrix.min_trip }}
+            --min-trip-days ${{ matrix.min_trip }}${{ matrix.no_thailand || '' }}
 
       - name: Upload debug artifacts
         if: always()
