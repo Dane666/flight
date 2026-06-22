@@ -52,7 +52,7 @@ jobs:
           - label: 中秋那霸-广州
             depart: 2026-09-24
             return: 2026-09-27
-            window: 1
+            window: 0
             min_trip: 0
             origin: CAN
             dest: OKA
@@ -60,7 +60,7 @@ jobs:
           - label: 中秋那霸-香港
             depart: 2026-09-24
             return: 2026-09-27
-            window: 1
+            window: 0
             min_trip: 0
             origin: HKG
             dest: OKA
