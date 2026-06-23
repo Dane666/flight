@@ -14,41 +14,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - label: 中秋
-            depart: 2026-09-24
-            return: 2026-09-27
-            window: 1
-            min_trip: 0
-            origin: HKG
-            dest: PQC
-          - label: 国庆
-            depart: 2026-10-01
-            return: 2026-10-07
-            window: 1
-            min_trip: 0
-            origin: HKG
-            dest: PQC
-          - label: 中秋国庆桥-请假3天
-            depart: 2026-09-25
-            return: 2026-10-07
-            window: 1
-            min_trip: 5
-            origin: HKG
-            dest: PQC
-          - label: 春节
-            depart: 2027-02-15
-            return: 2027-02-22
-            window: 1
-            min_trip: 0
-            origin: HKG
-            dest: PQC
-          - label: 春节特价
-            depart: 2027-02-07
-            return: 2027-02-10
-            window: 1
-            min_trip: 0
-            origin: HKG
-            dest: PQC
           - label: 中秋那霸-广州
             depart: 2026-09-24
             return: 2026-09-27
