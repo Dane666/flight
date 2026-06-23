@@ -14,6 +14,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # ── 那霸(OKA) ──
           - label: 中秋那霸-广州
             depart: 2026-09-24
             return: 2026-09-27
@@ -30,6 +31,66 @@ jobs:
             origin: HKG
             dest: OKA
             no_thailand: " --no-thailand"
+          # ── 富国岛(PQC) 11月初 ──
+          - label: PQC-11月初-CAN
+            depart: 2026-11-06
+            return: 2026-11-09
+            window: 1
+            min_trip: 3
+            origin: CAN
+            dest: PQC
+          - label: PQC-11月初-HKG
+            depart: 2026-11-06
+            return: 2026-11-09
+            window: 1
+            min_trip: 3
+            origin: HKG
+            dest: PQC
+          # ── 富国岛(PQC) 圣诞 ──
+          - label: PQC-圣诞-CAN
+            depart: 2026-12-24
+            return: 2026-12-27
+            window: 1
+            min_trip: 3
+            origin: CAN
+            dest: PQC
+          - label: PQC-圣诞-HKG
+            depart: 2026-12-24
+            return: 2026-12-27
+            window: 1
+            min_trip: 3
+            origin: HKG
+            dest: PQC
+          # ── 富国岛(PQC) 元旦 ──
+          - label: PQC-元旦-CAN
+            depart: 2027-01-01
+            return: 2027-01-04
+            window: 1
+            min_trip: 3
+            origin: CAN
+            dest: PQC
+          - label: PQC-元旦-HKG
+            depart: 2027-01-01
+            return: 2027-01-04
+            window: 1
+            min_trip: 3
+            origin: HKG
+            dest: PQC
+          # ── 富国岛(PQC) 年前 ──
+          - label: PQC-年前-CAN
+            depart: 2027-01-22
+            return: 2027-01-25
+            window: 1
+            min_trip: 3
+            origin: CAN
+            dest: PQC
+          - label: PQC-年前-HKG
+            depart: 2027-01-22
+            return: 2027-01-25
+            window: 1
+            min_trip: 3
+            origin: HKG
+            dest: PQC
 
     runs-on: ubuntu-latest
     timeout-minutes: 60
