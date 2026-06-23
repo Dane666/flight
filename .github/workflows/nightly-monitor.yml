@@ -18,7 +18,7 @@ jobs:
             depart: 2026-09-24
             return: 2026-09-27
             window: 0
-            min_trip: 0
+            min_trip: 3
             origin: CAN
             dest: OKA
             no_thailand: " --no-thailand"
@@ -26,7 +26,7 @@ jobs:
             depart: 2026-09-24
             return: 2026-09-27
             window: 0
-            min_trip: 0
+            min_trip: 3
             origin: HKG
             dest: OKA
             no_thailand: " --no-thailand"

@@ -180,7 +180,7 @@ def cmd_search(args: argparse.Namespace) -> None:
         return_date=date.fromisoformat(args.return_date),
         window_days=args.window_days,
         label=args.label or "",
-        min_trip_days=args.min_trip_days or None,
+        min_trip_days=args.min_trip_days,
     )
 
 
@@ -260,7 +260,7 @@ def build_parser() -> argparse.ArgumentParser:
     search_parser.add_argument(
         "--min-trip-days",
         type=int,
-        default=0,
+        default=None,
         help="最小行程天数，默认取自配置 min_trip_days",
     )
     search_parser.add_argument(
