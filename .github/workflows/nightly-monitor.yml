@@ -115,8 +115,7 @@ jobs:
 
       - name: Build config.yaml from secrets
         env:
-          FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
-          FEISHU_SECRET: ${{ secrets.FEISHU_SECRET }}
+          BARK_DEVICE_KEY: ${{ secrets.BARK_DEVICE_KEY }}
         run: |
           python main.py init-config --force
 
@@ -129,15 +128,13 @@ jobs:
           if isinstance(obj, str):
               obj = yaml.safe_load(obj)
 
-          feishu_webhook = os.getenv("FEISHU_WEBHOOK_URL")
-          feishu_secret = os.getenv("FEISHU_SECRET")
+          bark_device_key = os.getenv("BARK_DEVICE_KEY")
 
           obj["provider"] = "trip_scrape"
           obj["currency"] = obj.get("currency", "CNY")
           obj["trip_scrape_timeout_seconds"] = 60
-          obj["notifier"] = "feishu" if feishu_webhook else "console"
-          obj["feishu_webhook_url"] = feishu_webhook
-          obj["feishu_secret"] = feishu_secret
+          obj["notifier"] = "bark" if bark_device_key else "console"
+          obj["bark_device_key"] = bark_device_key
           obj["thailand_destinations"] = ["BKK", "DMK", "HKT"]
           obj["origins"] = ["HKG"]
 

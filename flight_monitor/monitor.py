@@ -8,9 +8,9 @@ from flight_monitor.fx import FxConverter
 from flight_monitor.models import PriceQuote, Route
 from flight_monitor.notifier import (
     AlertMessage,
+    BarkNotifier,
     ConsoleNotifier,
     EmailNotifier,
-    FeishuNotifier,
 )
 from flight_monitor.providers.base import PriceProvider
 from flight_monitor.storage import PriceStorage
@@ -84,7 +84,7 @@ class FlightMonitor:
         config: AppConfig,
         provider: PriceProvider,
         storage: PriceStorage,
-        notifier: ConsoleNotifier | EmailNotifier | FeishuNotifier,
+        notifier: ConsoleNotifier | EmailNotifier | BarkNotifier,
     ) -> None:
         self.config = config
         self.provider = provider
@@ -1132,7 +1132,7 @@ class FlightMonitor:
                 segments.append(f"back_stop_detail={return_stopover_details}")
             return " ".join(segments)
 
-        def build_feishu_deal_block(
+        def build_notify_deal_block(
             title: str,
             deal_item: dict[str, str | float | None] | None,
             direct_item: dict[str, str | float | None] | None,
@@ -1446,35 +1446,34 @@ class FlightMonitor:
                 print(direct_line, flush=True)
                 summary_lines.append(direct_line)
 
-        if self.config.feishu_webhook_url:
+        if self.config.bark_device_key:
             try:
-                feishu_lines: list[str] = [
+                bark_lines: list[str] = [
                     "【机票汇总】",
                     "日期: 已按目的地独立匹配",
                     "",
-                    *build_feishu_deal_block(
+                    *build_notify_deal_block(
                         "【PQC 最低价】",
                         pqc_best,
                         pqc_best_direct,
                     ),
                     "",
-                    *build_feishu_deal_block(
+                    *build_notify_deal_block(
                         "【泰国最低价】",
                         thailand_best,
                         thailand_best_direct,
                     ),
                 ]
-                feishu_notifier = FeishuNotifier(
-                    webhook_url=self.config.feishu_webhook_url,
-                    secret=self.config.feishu_secret,
+                bark_notifier = BarkNotifier(
+                    device_key=self.config.bark_device_key,
                 )
-                feishu_notifier.send_text("\n".join(feishu_lines))
-                print("[FEISHU] 汇总推送成功", flush=True)
+                bark_notifier.send_text("\n".join(bark_lines))
+                print("[BARK] 汇总推送成功", flush=True)
             except Exception as error:
-                print(f"[FEISHU] 汇总推送失败: {error}", flush=True)
+                print(f"[BARK] 汇总推送失败: {error}", flush=True)
         else:
             print(
-                "[FEISHU] 未配置 feishu_webhook_url，已跳过汇总推送",
+                "[BARK] 未配置 bark_device_key，已跳过汇总推送",
                 flush=True,
             )
 
@@ -1740,8 +1739,8 @@ class FlightMonitor:
             line += f" direct={'Y' if is_direct else 'N'}"
             print(line, flush=True)
 
-        # combined feishu message
-        if self.config.feishu_webhook_url:
+        # combined bark message
+        if self.config.bark_device_key:
             try:
                 title_line = f"【{label.strip()}】" if label else "【机票搜索】"
                 lines = [
@@ -1807,14 +1806,13 @@ class FlightMonitor:
                     if idx < len(results):
                         lines.append("")
 
-                feishu_notifier = FeishuNotifier(
-                    webhook_url=self.config.feishu_webhook_url,
-                    secret=self.config.feishu_secret,
+                bark_notifier = BarkNotifier(
+                    device_key=self.config.bark_device_key,
                 )
-                feishu_notifier.send_text("\n".join(lines))
-                print(f"[FEISHU]{header} 推送成功 ({len(results)}个目的地)", flush=True)
+                bark_notifier.send_text("\n".join(lines))
+                print(f"[BARK]{header} 推送成功 ({len(results)}个目的地)", flush=True)
             except Exception as error:
-                print(f"[FEISHU]{header} 推送失败: {error}", flush=True)
+                print(f"[BARK]{header} 推送失败: {error}", flush=True)
 
     def run_loop(self) -> None:
         print(

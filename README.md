@@ -1,6 +1,6 @@
 # 机票价格监控
 
-基于 Playwright 的 Trip.com 网页抓取工具，用于监控往返机票价格并推送到飞书。
+基于 Playwright 的 Trip.com 网页抓取工具，用于监控往返机票价格并通过 Bark 推送到 iPhone。
 
 **当前版本聚焦**：纯网页抓取（`trip_scrape`），无需任何 API Key。已移除 Google Flights、Kiwi、Amadeus 等付费 API 依赖。
 
@@ -32,7 +32,7 @@ python main.py search \
 - `--destination`: 主目的地 IATA 码（如 PQC）
 - `--depart-date` / `--return-date`: 参考去返日期 YYYY-MM-DD
 - `--window-days`: 去返日期前后滑动窗口天数（默认 2）
-- `--label`: 搜索标签，出现在飞书推送标题中
+- `--label`: 搜索标签，出现在推送标题中
 - `--no-thailand`: 仅搜索指定目的地，不包含泰国目的地
 - `--config`: 配置文件路径（默认 config.yaml）
 
@@ -63,11 +63,10 @@ python main.py run --config config.yaml
 | 春节 | 02-14 ~ 02-22 | 春节前后两天 |
 | 春节特价 | 02-07 ~ 02-10 | 节前特价窗口 |
 
-每次搜索同时对比 PQC 和泰国多目的地最低价，结果推送到飞书。
+每次搜索同时对比 PQC 和泰国多目的地最低价，结果通过 Bark 推送到 iPhone。
 
 **所需 GitHub Secrets：**
-- `FEISHU_WEBHOOK_URL`: 飞书机器人 webhook 地址
-- `FEISHU_SECRET`: 飞书签名密钥（可选）
+- `BARK_DEVICE_KEY`: Bark 设备密钥（从 Bark App 获取）
 
 ## 配置文件核心字段
 
@@ -81,9 +80,8 @@ interval_minutes: 30            # 持续监控间隔
 origins: [HKG]                  # 出发地
 destination: PQC                # 主目的地
 thailand_destinations: [BKK]    # 泰国对比目的地
-feishu_webhook_url: "..."       # 飞书 webhook
-feishu_secret: null             # 飞书签名密钥
-notifier: feishu                # 通知方式：feishu / console
+bark_device_key: "..."          # Bark 设备密钥
+notifier: bark                  # 通知方式：bark / console
 ```
 
 ## 输出示例
@@ -93,7 +91,7 @@ notifier: feishu                # 通知方式：feishu / console
 [中秋] HKG->BKK 2026-09-25/2026-09-29 (4天) go=09:15->11:30 back=17:45->20:10 PRICE=2100.00 CNY (src=304.00 USD) flight=TG601 airline=Thai Airways direct=Y
 ```
 
-飞书推送包含多目的地价格对比表格。
+Bark 推送包含多目的地价格对比内容。
 
 ## 功能清单
 
@@ -102,5 +100,5 @@ notifier: feishu                # 通知方式：feishu / console
 - **滑动窗口**：指定参考日期 ± N 天自动生成往返组合
 - **价格位置判定**：基于历史数据标记高位/中位/低位
 - **智能告警**：价格低于阈值时自动推送，支持冷却时间
-- **飞书推送**：多节日搜索结果合并推送一条消息
+- **Bark 推送**：多节日搜索结果合并推送到 iPhone
 - **GitHub Actions**：定时自动化运行，无需本地机器

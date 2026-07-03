@@ -9,7 +9,7 @@ from flight_monitor.config import (
     save_config,
 )
 from flight_monitor.monitor import FlightMonitor
-from flight_monitor.notifier import ConsoleNotifier, EmailNotifier, FeishuNotifier
+from flight_monitor.notifier import BarkNotifier, ConsoleNotifier, EmailNotifier
 from flight_monitor.providers.amadeus_provider import AmadeusPriceProvider
 from flight_monitor.providers.fallback_provider import FallbackPriceProvider
 from flight_monitor.providers.google_flights_provider import (
@@ -111,12 +111,9 @@ def build_monitor(config_path: Path) -> FlightMonitor:
             email_to=config.email_to,
             smtp_use_tls=config.smtp_use_tls,
         )
-    elif notifier_name == "feishu":
-        if not config.feishu_webhook_url:
-            raise ValueError("notifier=feishu 时必须配置 feishu_webhook_url")
-        notifier = FeishuNotifier(
-            webhook_url=config.feishu_webhook_url,
-            secret=config.feishu_secret,
+    elif notifier_name == "bark":
+        notifier = BarkNotifier(
+            device_key=config.bark_device_key,
         )
     else:
         raise ValueError(f"不支持的 notifier: {config.notifier}")
@@ -264,7 +261,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="最小行程天数，默认取自配置 min_trip_days",
     )
     search_parser.add_argument(
-        "--label", default="", help="搜索标签，会出现在飞书标题中"
+        "--label", default="", help="搜索标签，会出现在推送标题中"
     )
     search_parser.add_argument(
         "--no-thailand",

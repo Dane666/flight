@@ -30,8 +30,7 @@ class AppConfig:
     smtp_use_tls: bool
     email_from: str | None
     email_to: list[str]
-    feishu_webhook_url: str | None
-    feishu_secret: str | None
+    bark_device_key: str | None
     db_path: str
     origins: list[str]
     destination: str
@@ -82,8 +81,7 @@ def create_default_config(
         smtp_use_tls=True,
         email_from=None,
         email_to=[],
-        feishu_webhook_url=None,
-        feishu_secret=None,
+        bark_device_key=None,
         db_path="data/flight_prices.db",
         origins=["CAN", "SZX", "HKG"],
         destination="PQC",
@@ -139,8 +137,7 @@ def load_config(config_path: Path) -> AppConfig:
         smtp_use_tls=bool(payload.get("smtp_use_tls", True)),
         email_from=payload.get("email_from"),
         email_to=list(payload.get("email_to", [])),
-        feishu_webhook_url=payload.get("feishu_webhook_url"),
-        feishu_secret=payload.get("feishu_secret"),
+        bark_device_key=payload.get("bark_device_key"),
         db_path=payload["db_path"],
         origins=list(payload["origins"]),
         destination=payload["destination"],
@@ -194,8 +191,7 @@ def save_config(config: AppConfig, output_path: Path) -> None:
         "smtp_use_tls": config.smtp_use_tls,
         "email_from": config.email_from,
         "email_to": config.email_to,
-        "feishu_webhook_url": config.feishu_webhook_url,
-        "feishu_secret": config.feishu_secret,
+        "bark_device_key": config.bark_device_key,
         "db_path": config.db_path,
         "origins": config.origins,
         "destination": config.destination,

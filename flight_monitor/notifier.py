@@ -1,15 +1,13 @@
 from dataclasses import dataclass
 from email.message import EmailMessage
-import base64
-import hashlib
-import hmac
-import json
-import time
+import os
 import smtplib
 
 import requests
 
 from flight_monitor.models import PriceQuote
+
+BARK_URL = "https://api.day.app/push"
 
 
 @dataclass(frozen=True)
@@ -96,58 +94,42 @@ class EmailNotifier:
         )
 
 
-class FeishuNotifier:
-    def __init__(
-        self,
-        webhook_url: str,
-        secret: str | None = None,
-    ) -> None:
-        self.webhook_url = webhook_url
-        self.secret = secret
+class BarkNotifier:
+    def __init__(self, device_key: str | None = None) -> None:
+        self.device_key = device_key or os.environ.get("BARK_DEVICE_KEY", "")
 
-    def _build_sign_headers(self) -> dict[str, str]:
-        if not self.secret:
-            return {}
+    def _send_bark(self, title: str, content: str) -> None:
+        if not self.device_key:
+            print("[BARK] BARK_DEVICE_KEY 未配置，跳过推送", flush=True)
+            return
 
-        timestamp = str(int(time.time()))
-        sign_str = f"{timestamp}\n{self.secret}".encode("utf-8")
-        digest = hmac.new(
-            self.secret.encode("utf-8"),
-            sign_str,
-            digestmod=hashlib.sha256,
-        ).digest()
-        sign = base64.b64encode(digest).decode("utf-8")
-        return {"timestamp": timestamp, "sign": sign}
+        key = self.device_key
+        if key.startswith("http"):
+            parts = key.rstrip("/").split("/")
+            key = parts[-1] if parts[-1] else (parts[-2] if len(parts) > 1 else key)
 
-    def _is_flow_webhook(self) -> bool:
-        return "feishu.cn/flow/api/trigger-webhook/" in self.webhook_url
+        body = content[:3800]
+        payload = {
+            "device_key": key,
+            "title": title,
+            "body": body,
+            "group": "Flight",
+        }
 
-    def _flatten_text_for_flow(self, text: str) -> str:
-        chunks = [line.strip() for line in text.splitlines() if line.strip()]
-        if not chunks:
-            return text
-        return "  |  ".join(chunks)
+        try:
+            response = requests.post(BARK_URL, json=payload, timeout=10)
+            if response.status_code == 200:
+                print("[BARK] 推送成功", flush=True)
+            else:
+                print(f"[BARK] 推送失败: {response.text}", flush=True)
+        except Exception as error:
+            print(f"[BARK] 推送错误: {error}", flush=True)
 
     def send_text(self, text: str) -> None:
-        if self._is_flow_webhook():
-            flow_text = self._flatten_text_for_flow(text)
-            payload = {
-                "text": flow_text,
-            }
-        else:
-            payload = {
-                "msg_type": "text",
-                "content": {"text": text},
-            }
-        payload.update(self._build_sign_headers())
-
-        response = requests.post(
-            self.webhook_url,
-            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-            headers={"Content-Type": "application/json; charset=utf-8"},
-            timeout=15,
-        )
-        response.raise_for_status()
+        lines = text.strip().split("\n", 1)
+        title = lines[0] if lines else "机票通知"
+        content = lines[1] if len(lines) > 1 else ""
+        self._send_bark(title, content)
 
     def notify(self, message: AlertMessage) -> None:
         quote = message.quote
@@ -156,17 +138,17 @@ class FeishuNotifier:
             if message.historical_low is not None
             else "N/A"
         )
-        text = (
-            "[机票提醒]\n"
+        title = f"机票提醒 {quote.route.origin}->{quote.route.destination}"
+        content = (
             f"航线: {quote.route.origin}->{quote.route.destination}\n"
             f"日期: {quote.depart_date} ~ {quote.return_date}\n"
             f"价格: {quote.total_price:.2f} {quote.currency}\n"
             f"阈值: {message.threshold:.2f}\n"
             f"历史低价: {low_text}"
         )
-        self.send_text(text)
+        self._send_bark(title, content)
         print(
-            "[ALERT-FEISHU-SENT] "
+            "[ALERT-BARK-SENT] "
             f"{quote.route.origin}->{quote.route.destination} "
             f"{quote.depart_date}/{quote.return_date}"
         )
