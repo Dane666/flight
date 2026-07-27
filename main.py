@@ -1,4 +1,5 @@
 import argparse
+import os
 from datetime import date
 from pathlib import Path
 import sys
@@ -10,12 +11,6 @@ from flight_monitor.config import (
 )
 from flight_monitor.monitor import FlightMonitor
 from flight_monitor.notifier import BarkNotifier, ConsoleNotifier, EmailNotifier
-from flight_monitor.providers.amadeus_provider import AmadeusPriceProvider
-from flight_monitor.providers.fallback_provider import FallbackPriceProvider
-from flight_monitor.providers.google_flights_provider import (
-    GoogleFlightsPriceProvider,
-)
-from flight_monitor.providers.kiwi_provider import KiwiPriceProvider
 from flight_monitor.providers.mock_provider import MockPriceProvider
 from flight_monitor.providers.trip_scrape_provider import (
     TripScrapePriceProvider,
@@ -29,53 +24,15 @@ def build_monitor(config_path: Path) -> FlightMonitor:
     provider_name = config.provider.lower().strip()
     if provider_name == "mock":
         provider = MockPriceProvider()
-    elif provider_name == "google_flights":
-        if not config.serpapi_api_key:
-            raise ValueError(
-                "provider=google_flights 时必须配置 serpapi_api_key"
-            )
-        google_provider = GoogleFlightsPriceProvider(
-            api_key=config.serpapi_api_key,
-            hl=config.google_flights_hl,
-            gl=config.google_flights_gl,
-        )
-        trip_fallback_provider = TripScrapePriceProvider(
-            timeout_seconds=config.trip_scrape_timeout_seconds,
-        )
-        provider = FallbackPriceProvider(
-            primary=google_provider,
-            fallback=trip_fallback_provider,
-        )
-    elif provider_name == "kiwi":
-        if not config.kiwi_api_key:
-            raise ValueError("provider=kiwi 时必须配置 kiwi_api_key")
-        provider = KiwiPriceProvider(api_key=config.kiwi_api_key)
-    elif provider_name == "amadeus":
-        client_id = config.amadeus_client_id
-        client_secret = config.amadeus_client_secret
-        required_values = {
-            "amadeus_client_id": client_id,
-            "amadeus_client_secret": client_secret,
-        }
-        missing_keys = [
-            key for key, value in required_values.items() if not value
-        ]
-        if missing_keys:
-            raise ValueError(
-                "provider=amadeus 时缺少配置: "
-                + ", ".join(sorted(missing_keys))
-            )
-        provider = AmadeusPriceProvider(
-            client_id=client_id or "",
-            client_secret=client_secret or "",
-            base_url=config.amadeus_base_url,
-        )
     elif provider_name == "trip_scrape":
         provider = TripScrapePriceProvider(
             timeout_seconds=config.trip_scrape_timeout_seconds,
         )
     else:
-        raise ValueError(f"不支持的 provider: {config.provider}")
+        raise ValueError(
+            f"不支持的 provider: {config.provider} "
+            f"（当前仅支持 mock / trip_scrape）"
+        )
 
     notifier_name = config.notifier.lower().strip()
     if notifier_name == "console":
@@ -181,6 +138,54 @@ def cmd_search(args: argparse.Namespace) -> None:
     )
 
 
+def cmd_run_tasks(args: argparse.Namespace) -> None:
+    """批量执行 config.yaml 中 tasks 列表定义的所有搜索任务。"""
+    config_path = Path(args.config)
+    config = load_config(config_path)
+
+    if not config.tasks:
+        print("配置文件中没有定义任何任务（tasks 为空），无需执行。")
+        return
+
+    # 每个任务独立构建 monitor，确保每次搜索使用干净的状态
+    for i, task in enumerate(config.tasks, start=1):
+        print(f"\n{'=' * 60}")
+        print(f"[{i}/{len(config.tasks)}] 执行任务: {task.name}")
+        print(f"  出发地: {task.origin} → 目的地: {task.destination}")
+        print(f"  去程: {task.depart_date}  返程: {task.return_date}")
+        print(f"  窗口: ±{task.window_days} 天  最少行程: {task.min_trip_days or config.min_trip_days} 天")
+        print(f"{'=' * 60}")
+
+        # 设置任务级调试目录，便于 artifact 上传
+        debug_dir = f"artifacts/trip-scrape-{task.name}"
+        os.environ["TRIP_SCRAPE_DEBUG_DIR"] = debug_dir
+
+        monitor = build_monitor(config_path)
+
+        destinations: list[str] = [task.destination]
+        if not task.no_thailand:
+            destinations.extend(monitor.config.thailand_destinations)
+        # deduplicate while preserving order
+        seen: set[str] = set()
+        unique: list[str] = []
+        for d in destinations:
+            if d not in seen:
+                seen.add(d)
+                unique.append(d)
+
+        monitor.run_custom_search(
+            origin=task.origin,
+            destinations=unique,
+            depart_date=task.depart_date,
+            return_date=task.return_date,
+            window_days=task.window_days,
+            label=task.name,
+            min_trip_days=task.min_trip_days,
+        )
+
+    print(f"\n全部 {len(config.tasks)} 个任务执行完成。")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="机票价格监控")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -269,6 +274,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="不搜索泰国目的地，仅搜索 --destination 指定的目的地",
     )
     search_parser.set_defaults(func=cmd_search)
+
+    run_tasks_parser = subparsers.add_parser(
+        "run-tasks",
+        help="批量执行 config.yaml 中 tasks 列表定义的所有搜索任务",
+    )
+    run_tasks_parser.add_argument(
+        "--config", default="config.yaml", help="配置文件路径"
+    )
+    run_tasks_parser.set_defaults(func=cmd_run_tasks)
 
     return parser
 

@@ -4,7 +4,13 @@ __pycache__/
 .pytest_cache/
 .venv/
 data/
-config.yaml
 tmp/
 output/
 tools/
+
+# WorkBuddy 记忆目录（本地，不提交）
+.workbuddy/
+
+# 含敏感 token 的本地配置，禁止提交
+.claude/settings.local.json
+.claude/settings.local.json.bak

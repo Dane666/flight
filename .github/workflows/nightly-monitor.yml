@@ -5,95 +5,13 @@ on:
     branches:
       - main
   schedule:
-    - cron: '0 17 * * *' # 每天凌晨 01:00 (UTC+8) — 航司夜间复盘库存，特价票释放高峰
+    - cron: '0 17 * * *'  # 每天凌晨 01:00 (UTC+8)
   workflow_dispatch:
 
 jobs:
-  search:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          # ── 那霸(OKA) ──
-          - label: 中秋那霸-广州
-            depart: 2026-09-24
-            return: 2026-09-27
-            window: 0
-            min_trip: 3
-            origin: CAN
-            dest: OKA
-            no_thailand: " --no-thailand"
-          - label: 中秋那霸-香港
-            depart: 2026-09-24
-            return: 2026-09-27
-            window: 0
-            min_trip: 3
-            origin: HKG
-            dest: OKA
-            no_thailand: " --no-thailand"
-          # ── 富国岛(PQC) 11月初 ──
-          - label: PQC-11月初-CAN
-            depart: 2026-11-06
-            return: 2026-11-09
-            window: 1
-            min_trip: 3
-            origin: CAN
-            dest: PQC
-          - label: PQC-11月初-HKG
-            depart: 2026-11-06
-            return: 2026-11-09
-            window: 1
-            min_trip: 3
-            origin: HKG
-            dest: PQC
-          # ── 富国岛(PQC) 圣诞 ──
-          - label: PQC-圣诞-CAN
-            depart: 2026-12-24
-            return: 2026-12-27
-            window: 1
-            min_trip: 3
-            origin: CAN
-            dest: PQC
-          - label: PQC-圣诞-HKG
-            depart: 2026-12-24
-            return: 2026-12-27
-            window: 1
-            min_trip: 3
-            origin: HKG
-            dest: PQC
-          # ── 富国岛(PQC) 元旦 ──
-          - label: PQC-元旦-CAN
-            depart: 2027-01-01
-            return: 2027-01-04
-            window: 1
-            min_trip: 3
-            origin: CAN
-            dest: PQC
-          - label: PQC-元旦-HKG
-            depart: 2027-01-01
-            return: 2027-01-04
-            window: 1
-            min_trip: 3
-            origin: HKG
-            dest: PQC
-          # ── 富国岛(PQC) 年前 ──
-          - label: PQC-年前-CAN
-            depart: 2027-01-22
-            return: 2027-01-25
-            window: 1
-            min_trip: 3
-            origin: CAN
-            dest: PQC
-          - label: PQC-年前-HKG
-            depart: 2027-01-22
-            return: 2027-01-25
-            window: 1
-            min_trip: 3
-            origin: HKG
-            dest: PQC
-
+  run-all-tasks:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 120
 
     steps:
       - name: Checkout
@@ -113,52 +31,26 @@ jobs:
         run: |
           python -m playwright install chromium
 
-      - name: Build config.yaml from secrets
+      - name: Run tests
+        run: |
+          python -m pytest tests/ -q
+
+      - name: Run all search tasks
         env:
           BARK_DEVICE_KEY: ${{ secrets.BARK_DEVICE_KEY }}
         run: |
-          python main.py init-config --force
-
-          python - <<'PY'
-          from pathlib import Path
-          import os, yaml
-
-          path = Path("config.yaml")
-          obj = yaml.safe_load(path.read_text(encoding="utf-8"))
-          if isinstance(obj, str):
-              obj = yaml.safe_load(obj)
-
-          bark_device_key = os.getenv("BARK_DEVICE_KEY")
-
-          obj["provider"] = "trip_scrape"
-          obj["currency"] = obj.get("currency", "CNY")
-          obj["trip_scrape_timeout_seconds"] = 60
-          obj["notifier"] = "bark" if bark_device_key else "console"
-          obj["bark_device_key"] = bark_device_key
-          obj["thailand_destinations"] = ["BKK", "DMK", "HKT"]
-          obj["origins"] = ["HKG"]
-
-          path.write_text(
-              yaml.safe_dump(obj, allow_unicode=True, sort_keys=False),
-              encoding="utf-8",
-          )
-          print(f"config.yaml ready, provider={obj.get('provider')}")
-          PY
-
-      - name: Search ${{ matrix.label }}
-        env:
-          TRIP_SCRAPE_DEBUG_DIR: artifacts/trip-scrape-${{ matrix.label }}
-        run: |
-          python main.py search \
-            --origin ${{ matrix.origin }} --destination ${{ matrix.dest }} \
-            --depart-date ${{ matrix.depart }} --return-date ${{ matrix.return }} \
-            --window-days ${{ matrix.window }} --label "${{ matrix.label }}" \
-            --min-trip-days ${{ matrix.min_trip }}${{ matrix.no_thailand || '' }}
+          echo "加载配置文件中 $(python -c "
+          import yaml
+          with open('config.yaml') as f:
+              tasks = yaml.safe_load(f).get('tasks', [])
+          print(len(tasks))
+          ") 个搜索任务"
+          python main.py run-tasks
 
       - name: Upload debug artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: trip-scrape-${{ matrix.label }}
-          path: artifacts/trip-scrape-${{ matrix.label }}
+          name: trip-scrape-debug
+          path: artifacts/
           if-no-files-found: ignore

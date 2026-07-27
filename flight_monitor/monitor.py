@@ -13,69 +13,18 @@ from flight_monitor.notifier import (
     EmailNotifier,
 )
 from flight_monitor.providers.base import PriceProvider
+from flight_monitor.scheduling import build_roundtrip_pairs
 from flight_monitor.storage import PriceStorage
 
 
-def build_roundtrip_pairs(
-    window_start: date,
-    window_end: date,
-    min_trip_days: int = 4,
-    required_coverage_start: date | None = None,
-    required_coverage_end: date | None = None,
-    max_trip_span_days: int | None = None,
-    max_leave_workdays: int | None = None,
-) -> list[tuple[date, date]]:
-    if window_end <= window_start:
-        raise ValueError("window_end 必须晚于 window_start")
+def _meta_str(meta: dict, key: str) -> str | None:
+    """从 provider 返回的 meta 字典中安全提取字符串字段。
 
-    def count_leave_workdays(
-        depart_day: date,
-        return_day: date,
-    ) -> int:
-        if required_coverage_start is None or required_coverage_end is None:
-            return 0
-
-        leave_days = 0
-        current_day = depart_day
-        while current_day <= return_day:
-            in_holiday = (
-                required_coverage_start <= current_day <= required_coverage_end
-            )
-            if current_day.weekday() < 5 and not in_holiday:
-                leave_days += 1
-            current_day += timedelta(days=1)
-        return leave_days
-
-    all_days: list[date] = []
-    current = window_start
-    while current <= window_end:
-        all_days.append(current)
-        current += timedelta(days=1)
-
-    pairs: list[tuple[date, date]] = []
-    for depart_day in all_days:
-        for return_day in all_days:
-            trip_days = (return_day - depart_day).days
-            trip_span_days = trip_days + 1
-            if trip_days < min_trip_days:
-                continue
-            if required_coverage_start and depart_day > required_coverage_start:
-                continue
-            if required_coverage_end and return_day < required_coverage_end:
-                continue
-            if (
-                max_trip_span_days is not None
-                and trip_span_days > max_trip_span_days
-            ):
-                continue
-            if (
-                max_leave_workdays is not None
-                and count_leave_workdays(depart_day, return_day)
-                > max_leave_workdays
-            ):
-                continue
-            pairs.append((depart_day, return_day))
-    return pairs
+    Trip.com 抓取返回的 meta 可能缺失某些字段，或非字符串类型，
+    统一用此函数避免散落各处的 `meta.get(k) if isinstance(...) else None` 样板。
+    """
+    value = meta.get(key)
+    return value if isinstance(value, str) else None
 
 
 class FlightMonitor:
@@ -367,124 +316,76 @@ class FlightMonitor:
             enriched.update(
                 {
                     "depart_time": (
-                        meta.get("depart_time")
-                        if isinstance(meta.get("depart_time"), str)
-                        else None
+                        _meta_str(meta, "depart_time")
                     ),
                     "arrive_time": (
-                        meta.get("arrive_time")
-                        if isinstance(meta.get("arrive_time"), str)
-                        else None
+                        _meta_str(meta, "arrive_time")
                     ),
                     "return_depart_time": (
-                        meta.get("return_depart_time")
-                        if isinstance(meta.get("return_depart_time"), str)
-                        else None
+                        _meta_str(meta, "return_depart_time")
                     ),
                     "return_arrive_time": (
-                        meta.get("return_arrive_time")
-                        if isinstance(meta.get("return_arrive_time"), str)
-                        else None
+                        _meta_str(meta, "return_arrive_time")
                     ),
                     "outbound_journey": (
-                        meta.get("outbound_journey")
-                        if isinstance(meta.get("outbound_journey"), str)
-                        else None
+                        _meta_str(meta, "outbound_journey")
                     ),
                     "return_journey": (
-                        meta.get("return_journey")
-                        if isinstance(meta.get("return_journey"), str)
-                        else None
+                        _meta_str(meta, "return_journey")
                     ),
                     "outbound_stopovers": (
-                        meta.get("outbound_stopovers")
-                        if isinstance(meta.get("outbound_stopovers"), str)
-                        else None
+                        _meta_str(meta, "outbound_stopovers")
                     ),
                     "return_stopovers": (
-                        meta.get("return_stopovers")
-                        if isinstance(meta.get("return_stopovers"), str)
-                        else None
+                        _meta_str(meta, "return_stopovers")
                     ),
                     "outbound_stopover_details": (
-                        meta.get("outbound_stopover_details")
-                        if isinstance(meta.get("outbound_stopover_details"), str)
-                        else None
+                        _meta_str(meta, "outbound_stopover_details")
                     ),
                     "return_stopover_details": (
-                        meta.get("return_stopover_details")
-                        if isinstance(meta.get("return_stopover_details"), str)
-                        else None
+                        _meta_str(meta, "return_stopover_details")
                     ),
                     "flight_number": (
-                        meta.get("flight_number")
-                        if isinstance(meta.get("flight_number"), str)
-                        else None
+                        _meta_str(meta, "flight_number")
                     ),
                     "outbound_airline": (
-                        meta.get("outbound_airline")
-                        if isinstance(meta.get("outbound_airline"), str)
-                        else None
+                        _meta_str(meta, "outbound_airline")
                     ),
                     "return_airline": (
-                        meta.get("return_airline")
-                        if isinstance(meta.get("return_airline"), str)
-                        else None
+                        _meta_str(meta, "return_airline")
                     ),
                     "outbound_travel_class": (
-                        meta.get("outbound_travel_class")
-                        if isinstance(meta.get("outbound_travel_class"), str)
-                        else None
+                        _meta_str(meta, "outbound_travel_class")
                     ),
                     "return_travel_class": (
-                        meta.get("return_travel_class")
-                        if isinstance(meta.get("return_travel_class"), str)
-                        else None
+                        _meta_str(meta, "return_travel_class")
                     ),
                     "outbound_airplane": (
-                        meta.get("outbound_airplane")
-                        if isinstance(meta.get("outbound_airplane"), str)
-                        else None
+                        _meta_str(meta, "outbound_airplane")
                     ),
                     "return_airplane": (
-                        meta.get("return_airplane")
-                        if isinstance(meta.get("return_airplane"), str)
-                        else None
+                        _meta_str(meta, "return_airplane")
                     ),
                     "outbound_duration": (
-                        meta.get("outbound_duration")
-                        if isinstance(meta.get("outbound_duration"), str)
-                        else None
+                        _meta_str(meta, "outbound_duration")
                     ),
                     "return_duration": (
-                        meta.get("return_duration")
-                        if isinstance(meta.get("return_duration"), str)
-                        else None
+                        _meta_str(meta, "return_duration")
                     ),
                     "outbound_extensions": (
-                        meta.get("outbound_extensions")
-                        if isinstance(meta.get("outbound_extensions"), str)
-                        else None
+                        _meta_str(meta, "outbound_extensions")
                     ),
                     "return_extensions": (
-                        meta.get("return_extensions")
-                        if isinstance(meta.get("return_extensions"), str)
-                        else None
+                        _meta_str(meta, "return_extensions")
                     ),
                     "outbound_carbon": (
-                        meta.get("outbound_carbon")
-                        if isinstance(meta.get("outbound_carbon"), str)
-                        else None
+                        _meta_str(meta, "outbound_carbon")
                     ),
                     "return_carbon": (
-                        meta.get("return_carbon")
-                        if isinstance(meta.get("return_carbon"), str)
-                        else None
+                        _meta_str(meta, "return_carbon")
                     ),
                     "price_insights": (
-                        meta.get("price_insights")
-                        if isinstance(meta.get("price_insights"), str)
-                        else None
+                        _meta_str(meta, "price_insights")
                     ),
                     "source_price": source_price,
                     "source_currency": source_currency,
@@ -836,9 +737,7 @@ class FlightMonitor:
 
                         meta = self.provider.get_last_quote_meta()
                         depart_time = (
-                            meta.get("depart_time")
-                            if isinstance(meta.get("depart_time"), str)
-                            else None
+                            _meta_str(meta, "depart_time")
                         )
                         if not self._is_depart_time_allowed(depart_time):
                             continue
@@ -851,125 +750,73 @@ class FlightMonitor:
                             "trip_days": (return_date - depart_date).days,
                             "depart_time": depart_time,
                             "arrive_time": (
-                                meta.get("arrive_time")
-                                if isinstance(meta.get("arrive_time"), str)
-                                else None
+                                _meta_str(meta, "arrive_time")
                             ),
                             "return_depart_time": (
-                                meta.get("return_depart_time")
-                                if isinstance(meta.get("return_depart_time"), str)
-                                else None
+                                _meta_str(meta, "return_depart_time")
                             ),
                             "return_arrive_time": (
-                                meta.get("return_arrive_time")
-                                if isinstance(meta.get("return_arrive_time"), str)
-                                else None
+                                _meta_str(meta, "return_arrive_time")
                             ),
                             "outbound_journey": (
-                                meta.get("outbound_journey")
-                                if isinstance(meta.get("outbound_journey"), str)
-                                else None
+                                _meta_str(meta, "outbound_journey")
                             ),
                             "return_journey": (
-                                meta.get("return_journey")
-                                if isinstance(meta.get("return_journey"), str)
-                                else None
+                                _meta_str(meta, "return_journey")
                             ),
                             "outbound_stopovers": (
-                                meta.get("outbound_stopovers")
-                                if isinstance(meta.get("outbound_stopovers"), str)
-                                else None
+                                _meta_str(meta, "outbound_stopovers")
                             ),
                             "return_stopovers": (
-                                meta.get("return_stopovers")
-                                if isinstance(meta.get("return_stopovers"), str)
-                                else None
+                                _meta_str(meta, "return_stopovers")
                             ),
                             "outbound_stopover_details": (
-                                meta.get("outbound_stopover_details")
-                                if isinstance(
-                                    meta.get("outbound_stopover_details"),
-                                    str,
-                                )
-                                else None
+                                _meta_str(meta, "outbound_stopover_details")
                             ),
                             "return_stopover_details": (
-                                meta.get("return_stopover_details")
-                                if isinstance(
-                                    meta.get("return_stopover_details"),
-                                    str,
-                                )
-                                else None
+                                _meta_str(meta, "return_stopover_details")
                             ),
                             "flight_number": (
-                                meta.get("flight_number")
-                                if isinstance(meta.get("flight_number"), str)
-                                else None
+                                _meta_str(meta, "flight_number")
                             ),
                             "outbound_airline": (
-                                meta.get("outbound_airline")
-                                if isinstance(meta.get("outbound_airline"), str)
-                                else None
+                                _meta_str(meta, "outbound_airline")
                             ),
                             "return_airline": (
-                                meta.get("return_airline")
-                                if isinstance(meta.get("return_airline"), str)
-                                else None
+                                _meta_str(meta, "return_airline")
                             ),
                             "outbound_travel_class": (
-                                meta.get("outbound_travel_class")
-                                if isinstance(meta.get("outbound_travel_class"), str)
-                                else None
+                                _meta_str(meta, "outbound_travel_class")
                             ),
                             "return_travel_class": (
-                                meta.get("return_travel_class")
-                                if isinstance(meta.get("return_travel_class"), str)
-                                else None
+                                _meta_str(meta, "return_travel_class")
                             ),
                             "outbound_airplane": (
-                                meta.get("outbound_airplane")
-                                if isinstance(meta.get("outbound_airplane"), str)
-                                else None
+                                _meta_str(meta, "outbound_airplane")
                             ),
                             "return_airplane": (
-                                meta.get("return_airplane")
-                                if isinstance(meta.get("return_airplane"), str)
-                                else None
+                                _meta_str(meta, "return_airplane")
                             ),
                             "outbound_duration": (
-                                meta.get("outbound_duration")
-                                if isinstance(meta.get("outbound_duration"), str)
-                                else None
+                                _meta_str(meta, "outbound_duration")
                             ),
                             "return_duration": (
-                                meta.get("return_duration")
-                                if isinstance(meta.get("return_duration"), str)
-                                else None
+                                _meta_str(meta, "return_duration")
                             ),
                             "outbound_extensions": (
-                                meta.get("outbound_extensions")
-                                if isinstance(meta.get("outbound_extensions"), str)
-                                else None
+                                _meta_str(meta, "outbound_extensions")
                             ),
                             "return_extensions": (
-                                meta.get("return_extensions")
-                                if isinstance(meta.get("return_extensions"), str)
-                                else None
+                                _meta_str(meta, "return_extensions")
                             ),
                             "outbound_carbon": (
-                                meta.get("outbound_carbon")
-                                if isinstance(meta.get("outbound_carbon"), str)
-                                else None
+                                _meta_str(meta, "outbound_carbon")
                             ),
                             "return_carbon": (
-                                meta.get("return_carbon")
-                                if isinstance(meta.get("return_carbon"), str)
-                                else None
+                                _meta_str(meta, "return_carbon")
                             ),
                             "price_insights": (
-                                meta.get("price_insights")
-                                if isinstance(meta.get("price_insights"), str)
-                                else None
+                                _meta_str(meta, "price_insights")
                             ),
                             "converted_price": converted_price,
                             "source_price": source_price,
@@ -1522,9 +1369,7 @@ class FlightMonitor:
 
             meta = self.provider.get_last_quote_meta()
             depart_time = (
-                meta.get("depart_time")
-                if isinstance(meta.get("depart_time"), str)
-                else None
+                _meta_str(meta, "depart_time")
             )
             if not self._is_depart_time_allowed(depart_time):
                 continue
@@ -1537,54 +1382,34 @@ class FlightMonitor:
                 "trip_days": (ret - depart).days,
                 "depart_time": depart_time,
                 "arrive_time": (
-                    meta.get("arrive_time")
-                    if isinstance(meta.get("arrive_time"), str)
-                    else None
+                    _meta_str(meta, "arrive_time")
                 ),
                 "return_depart_time": (
-                    meta.get("return_depart_time")
-                    if isinstance(meta.get("return_depart_time"), str)
-                    else None
+                    _meta_str(meta, "return_depart_time")
                 ),
                 "return_arrive_time": (
-                    meta.get("return_arrive_time")
-                    if isinstance(meta.get("return_arrive_time"), str)
-                    else None
+                    _meta_str(meta, "return_arrive_time")
                 ),
                 "outbound_stopovers": (
-                    meta.get("outbound_stopovers")
-                    if isinstance(meta.get("outbound_stopovers"), str)
-                    else None
+                    _meta_str(meta, "outbound_stopovers")
                 ),
                 "outbound_stopover_details": (
-                    meta.get("outbound_stopover_details")
-                    if isinstance(meta.get("outbound_stopover_details"), str)
-                    else None
+                    _meta_str(meta, "outbound_stopover_details")
                 ),
                 "return_stopovers": (
-                    meta.get("return_stopovers")
-                    if isinstance(meta.get("return_stopovers"), str)
-                    else None
+                    _meta_str(meta, "return_stopovers")
                 ),
                 "return_stopover_details": (
-                    meta.get("return_stopover_details")
-                    if isinstance(meta.get("return_stopover_details"), str)
-                    else None
+                    _meta_str(meta, "return_stopover_details")
                 ),
                 "flight_number": (
-                    meta.get("flight_number")
-                    if isinstance(meta.get("flight_number"), str)
-                    else None
+                    _meta_str(meta, "flight_number")
                 ),
                 "outbound_airline": (
-                    meta.get("outbound_airline")
-                    if isinstance(meta.get("outbound_airline"), str)
-                    else None
+                    _meta_str(meta, "outbound_airline")
                 ),
                 "return_airline": (
-                    meta.get("return_airline")
-                    if isinstance(meta.get("return_airline"), str)
-                    else None
+                    _meta_str(meta, "return_airline")
                 ),
                 "converted_price": converted_price,
                 "source_price": source_price,

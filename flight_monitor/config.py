@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -8,15 +8,22 @@ from flight_monitor.date_utils import get_festival_span
 
 
 @dataclass(frozen=True)
+class SearchTask:
+    """单个搜索任务定义 — 对应 config.yaml tasks 列表中的每一项。"""
+
+    name: str
+    origin: str
+    destination: str
+    depart_date: date
+    return_date: date
+    window_days: int = 1
+    min_trip_days: int | None = None
+    no_thailand: bool = False
+
+
+@dataclass(frozen=True)
 class AppConfig:
     provider: str
-    serpapi_api_key: str | None
-    kiwi_api_key: str | None
-    amadeus_client_id: str | None
-    amadeus_client_secret: str | None
-    amadeus_base_url: str
-    google_flights_hl: str
-    google_flights_gl: str
     trip_scrape_timeout_seconds: int
     currency: str
     interval_minutes: int
@@ -44,6 +51,29 @@ class AppConfig:
     max_trip_span_days: int
     max_leave_workdays: int
     festival: str
+    tasks: list[SearchTask] = field(default_factory=list)
+
+
+def _parse_tasks(raw: list[dict]) -> list[SearchTask]:
+    tasks: list[SearchTask] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        tasks.append(SearchTask(
+            name=str(item["name"]),
+            origin=str(item["origin"]).upper(),
+            destination=str(item["destination"]).upper(),
+            depart_date=date.fromisoformat(str(item["depart_date"])),
+            return_date=date.fromisoformat(str(item["return_date"])),
+            window_days=int(item.get("window_days", 1)),
+            min_trip_days=(
+                int(item["min_trip_days"])
+                if item.get("min_trip_days") is not None
+                else None
+            ),
+            no_thailand=bool(item.get("no_thailand", False)),
+        ))
+    return tasks
 
 
 def create_default_config(
@@ -61,13 +91,6 @@ def create_default_config(
         end = today + timedelta(days=10)
     return AppConfig(
         provider="mock",
-        serpapi_api_key=None,
-        kiwi_api_key=None,
-        amadeus_client_id=None,
-        amadeus_client_secret=None,
-        amadeus_base_url="https://test.api.amadeus.com",
-        google_flights_hl="en",
-        google_flights_gl="hk",
         trip_scrape_timeout_seconds=60,
         currency="CNY",
         interval_minutes=30,
@@ -95,6 +118,7 @@ def create_default_config(
         max_trip_span_days=6,
         max_leave_workdays=3,
         festival=festival,
+        tasks=[],
     )
 
 
@@ -113,15 +137,6 @@ def load_config(config_path: Path) -> AppConfig:
 
     return AppConfig(
         provider=payload.get("provider", "mock"),
-        serpapi_api_key=payload.get("serpapi_api_key"),
-        kiwi_api_key=payload.get("kiwi_api_key"),
-        amadeus_client_id=payload.get("amadeus_client_id"),
-        amadeus_client_secret=payload.get("amadeus_client_secret"),
-        amadeus_base_url=payload.get(
-            "amadeus_base_url", "https://test.api.amadeus.com"
-        ),
-        google_flights_hl=payload.get("google_flights_hl", "en"),
-        google_flights_gl=payload.get("google_flights_gl", "hk"),
         trip_scrape_timeout_seconds=int(
             payload.get("trip_scrape_timeout_seconds", 60)
         ),
@@ -164,6 +179,7 @@ def load_config(config_path: Path) -> AppConfig:
         max_trip_span_days=int(payload.get("max_trip_span_days", 6)),
         max_leave_workdays=int(payload.get("max_leave_workdays", 3)),
         festival=payload.get("festival", "dragon_boat"),
+        tasks=_parse_tasks(payload.get("tasks", [])),
     )
 
 
@@ -171,13 +187,6 @@ def save_config(config: AppConfig, output_path: Path) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "provider": config.provider,
-        "serpapi_api_key": config.serpapi_api_key,
-        "kiwi_api_key": config.kiwi_api_key,
-        "amadeus_client_id": config.amadeus_client_id,
-        "amadeus_client_secret": config.amadeus_client_secret,
-        "amadeus_base_url": config.amadeus_base_url,
-        "google_flights_hl": config.google_flights_hl,
-        "google_flights_gl": config.google_flights_gl,
         "trip_scrape_timeout_seconds": config.trip_scrape_timeout_seconds,
         "currency": config.currency,
         "interval_minutes": config.interval_minutes,
@@ -213,6 +222,19 @@ def save_config(config: AppConfig, output_path: Path) -> None:
         "max_trip_span_days": config.max_trip_span_days,
         "max_leave_workdays": config.max_leave_workdays,
         "festival": config.festival,
+        "tasks": [
+            {
+                "name": t.name,
+                "origin": t.origin,
+                "destination": t.destination,
+                "depart_date": t.depart_date.isoformat(),
+                "return_date": t.return_date.isoformat(),
+                "window_days": t.window_days,
+                "min_trip_days": t.min_trip_days,
+                "no_thailand": t.no_thailand,
+            }
+            for t in config.tasks
+        ],
     }
     with output_path.open("w", encoding="utf-8") as file:
         yaml.safe_dump(payload, file, allow_unicode=True, sort_keys=False)
