@@ -1,4 +1,5 @@
 import time
+import os
 from datetime import date, datetime, timedelta
 import re
 
@@ -1298,7 +1299,7 @@ class FlightMonitor:
                 print(direct_line, flush=True)
                 summary_lines.append(direct_line)
 
-        if self.config.bark_device_key:
+        if self.config.bark_device_key or os.environ.get("BARK_DEVICE_KEY"):
             try:
                 bark_lines: list[str] = [
                     "【机票汇总】",
@@ -1570,7 +1571,7 @@ class FlightMonitor:
             print(line, flush=True)
 
         # combined bark message
-        if self.config.bark_device_key:
+        if self.config.bark_device_key or os.environ.get("BARK_DEVICE_KEY"):
             try:
                 title_line = f"【{label.strip()}】" if label else "【机票搜索】"
                 lines = [
