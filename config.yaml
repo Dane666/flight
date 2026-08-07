@@ -61,7 +61,7 @@ tasks:
     min_trip_days: 3
     no_thailand: true
 
-  - name: "中秋那霸-香港"
+  - name: "香港那霸0924-0927"
     origin: HKG
     destination: OKA
     depart_date: "2026-09-24"
