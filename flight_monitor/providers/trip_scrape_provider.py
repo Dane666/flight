@@ -99,13 +99,23 @@ class TripScrapePriceProvider(PriceProvider):
             except Exception:
                 pass
 
-    def _ensure_context(self):
-        if self._context is not None:
-            return self._context
+    def _ensure_browser(self):
+        if self._browser is not None:
+            return self._browser
 
         self._playwright = sync_playwright().start()
         self._browser = self._playwright.chromium.launch(headless=True)
-        self._context = self._browser.new_context(
+        if not self._cleanup_registered:
+            atexit.register(self._cleanup_browser)
+            self._cleanup_registered = True
+        return self._browser
+
+    def _new_scrape_context(self):
+        """每次抓取使用全新 context，避免复用同一个 context 触发
+        Playwright 同步 API 的 'Sync API inside asyncio loop' 运行时错误
+        （表现为首个任务成功后，后续任务在 new_page() 时崩溃）。"""
+        browser = self._ensure_browser()
+        context = browser.new_context(
             user_agent=self.mobile_user_agent,
             locale="en-US",
             viewport={"width": 430, "height": 932},
@@ -114,22 +124,19 @@ class TripScrapePriceProvider(PriceProvider):
             has_touch=True,
             device_scale_factor=3,
         )
-        self._context.set_extra_http_headers(
+        context.set_extra_http_headers(
             {
                 "Accept-Language": "en-US,en;q=0.9,zh-CN;q=0.8",
                 "Upgrade-Insecure-Requests": "1",
             }
         )
-        self._context.route(
+        context.route(
             "**/*",
             lambda route: route.abort()
             if route.request.resource_type in {"image", "media", "font"}
             else route.continue_(),
         )
-        if not self._cleanup_registered:
-            atexit.register(self._cleanup_browser)
-            self._cleanup_registered = True
-        return self._context
+        return context
 
     def _build_trip_url(
         self,
@@ -1147,6 +1154,7 @@ class TripScrapePriceProvider(PriceProvider):
             return_date=return_date,
         )
 
+        context = None
         for attempt in range(1, self._max_retries + 1):
             self._log(
                 "[SCRAPE] 开始抓取 "
@@ -1154,7 +1162,7 @@ class TripScrapePriceProvider(PriceProvider):
                 f"attempt={attempt}/{self._max_retries}",
             )
             try:
-                context = self._ensure_context()
+                context = self._new_scrape_context()
                 page = context.new_page()
                 page.set_default_timeout(self._timeout_seconds * 1000)
                 snapshots: list[dict[str, str]] = []
@@ -1196,6 +1204,12 @@ class TripScrapePriceProvider(PriceProvider):
                         page.close()
                     except Exception:
                         pass
+                    try:
+                        if context is not None:
+                            context.close()
+                    except Exception:
+                        pass
+                    context = None
             except Exception as error:
                 page_ref = page if "page" in locals() else None
                 snapshots_ref = snapshots if "snapshots" in locals() else []
@@ -1223,7 +1237,10 @@ class TripScrapePriceProvider(PriceProvider):
                     )
                 except Exception:
                     pass
-                self._cleanup_browser()
+                # 注意：不在此处销毁 browser（per-call 的 context/page 已在
+                # finally 关闭）。保留 browser 可避免重试时再次调用
+                # sync_playwright().start()，后者在本项目的 GitHub 运行环境
+                # 中会因 asyncio loop 状态损坏而失败。
                 self._log(
                     "[WARN] Trip 抓取失败 "
                     f"{origin}->{destination} {depart_date}/{return_date} "

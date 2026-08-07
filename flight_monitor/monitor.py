@@ -1529,6 +1529,21 @@ class FlightMonitor:
 
         if not results:
             print(f"[SEARCH]{header} 所有目的地无可用价格", flush=True)
+            if self.config.bark_device_key or os.environ.get("BARK_DEVICE_KEY"):
+                try:
+                    bark_notifier = BarkNotifier(
+                        device_key=self.config.bark_device_key,
+                    )
+                    bark_notifier.send_text(
+                        f"【{label.strip() if label else '机票搜索'}】\n"
+                        f"窗口: {win_start} ~ {win_end}\n\n"
+                        f"⚠️ 本次未获取到任何价格\n"
+                        f"可能原因：抓取失败 / 该航线暂无结果。\n"
+                        f"请查看 GitHub Actions 运行日志与 trip-scrape-debug 调试快照。"
+                    )
+                    print(f"[BARK]{header} 空结果已通知", flush=True)
+                except Exception as error:
+                    print(f"[BARK]{header} 空结果通知失败: {error}", flush=True)
             return
 
         # sort by price ascending
