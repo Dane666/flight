@@ -52,6 +52,7 @@ class TripScrapePriceProvider(PriceProvider):
         self._playwright = None
         self._browser = None
         self._context = None
+        self._page = None
         self._cleanup_registered = False
         self._fast_scan_mode = False
 
@@ -76,13 +77,20 @@ class TripScrapePriceProvider(PriceProvider):
         return raw in {"1", "true", "yes", "on"}
 
     def _cleanup_browser(self) -> None:
+        page = self._page
         context = self._context
         browser = self._browser
         playwright = self._playwright
+        self._page = None
         self._context = None
         self._browser = None
         self._playwright = None
 
+        if page is not None:
+            try:
+                page.close()
+            except Exception:
+                pass
         if context is not None:
             try:
                 context.close()
@@ -110,10 +118,18 @@ class TripScrapePriceProvider(PriceProvider):
             self._cleanup_registered = True
         return self._browser
 
-    def _new_scrape_context(self):
-        """每次抓取使用全新 context，避免复用同一个 context 触发
-        Playwright 同步 API 的 'Sync API inside asyncio loop' 运行时错误
-        （表现为首个任务成功后，后续任务在 new_page() 时崩溃）。"""
+    def _get_page(self):
+        """返回复用型 page：整个进程只创建一次 context + 一个 page，
+        后续任务通过 page.goto 复用同一页面导航到新 URL。
+
+        关键修复：Playwright 同步 API 在「第二次 new_context()/new_page()」
+        时会抛出 'Sync API inside asyncio loop' 运行时错误（表现为首个任务
+        成功后，后续任务在新建 page 时崩溃）。持久复用单 page 可让 new_page()
+        只调用一次，彻底绕开该 bug。进程退出时由 _cleanup_browser 统一关闭。
+        """
+        if self._page is not None:
+            return self._page
+
         browser = self._ensure_browser()
         context = browser.new_context(
             user_agent=self.mobile_user_agent,
@@ -136,7 +152,9 @@ class TripScrapePriceProvider(PriceProvider):
             if route.request.resource_type in {"image", "media", "font"}
             else route.continue_(),
         )
-        return context
+        self._context = context
+        self._page = context.new_page()
+        return self._page
 
     def _build_trip_url(
         self,
@@ -1154,7 +1172,6 @@ class TripScrapePriceProvider(PriceProvider):
             return_date=return_date,
         )
 
-        context = None
         for attempt in range(1, self._max_retries + 1):
             self._log(
                 "[SCRAPE] 开始抓取 "
@@ -1162,8 +1179,7 @@ class TripScrapePriceProvider(PriceProvider):
                 f"attempt={attempt}/{self._max_retries}",
             )
             try:
-                context = self._new_scrape_context()
-                page = context.new_page()
+                page = self._get_page()
                 page.set_default_timeout(self._timeout_seconds * 1000)
                 snapshots: list[dict[str, str]] = []
                 price: float | None = None
@@ -1200,16 +1216,9 @@ class TripScrapePriceProvider(PriceProvider):
                             price=price,
                         )
                 finally:
-                    try:
-                        page.close()
-                    except Exception:
-                        pass
-                    try:
-                        if context is not None:
-                            context.close()
-                    except Exception:
-                        pass
-                    context = None
+                    # page 持久复用（整个进程仅创建一次），不在每次抓取后关闭，
+                    # 避免再次 new_page() 触发 'Sync API inside asyncio loop' 崩溃。
+                    pass
             except Exception as error:
                 page_ref = page if "page" in locals() else None
                 snapshots_ref = snapshots if "snapshots" in locals() else []
