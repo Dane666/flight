@@ -19,6 +19,9 @@ class SearchTask:
     window_days: int = 1
     min_trip_days: int | None = None
     no_thailand: bool = False
+    max_retries: int | None = None
+    timeout_seconds: int | None = None
+    group: str = "daily"
 
 
 @dataclass(frozen=True)
@@ -51,6 +54,7 @@ class AppConfig:
     max_trip_span_days: int
     max_leave_workdays: int
     festival: str
+    trip_scrape_max_retries: int = 3
     tasks: list[SearchTask] = field(default_factory=list)
 
 
@@ -72,6 +76,17 @@ def _parse_tasks(raw: list[dict]) -> list[SearchTask]:
                 else None
             ),
             no_thailand=bool(item.get("no_thailand", False)),
+            max_retries=(
+                int(item["max_retries"])
+                if item.get("max_retries") is not None
+                else None
+            ),
+            timeout_seconds=(
+                int(item["timeout_seconds"])
+                if item.get("timeout_seconds") is not None
+                else None
+            ),
+            group=str(item.get("group", "daily")).strip().lower(),
         ))
     return tasks
 
@@ -92,6 +107,7 @@ def create_default_config(
     return AppConfig(
         provider="mock",
         trip_scrape_timeout_seconds=60,
+        trip_scrape_max_retries=3,
         currency="CNY",
         interval_minutes=30,
         alert_threshold=2200,
@@ -139,6 +155,9 @@ def load_config(config_path: Path) -> AppConfig:
         provider=payload.get("provider", "mock"),
         trip_scrape_timeout_seconds=int(
             payload.get("trip_scrape_timeout_seconds", 60)
+        ),
+        trip_scrape_max_retries=int(
+            payload.get("trip_scrape_max_retries", 3)
         ),
         currency=payload["currency"],
         interval_minutes=int(payload["interval_minutes"]),

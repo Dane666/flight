@@ -11,6 +11,7 @@
 provider: trip_scrape
 currency: CNY
 trip_scrape_timeout_seconds: 60
+trip_scrape_max_retries: 3
 interval_minutes: 30
 alert_threshold: 2200
 alert_cooldown_minutes: 180
@@ -78,6 +79,9 @@ tasks:
     return_date: "2026-11-09"
     window_days: 1
     min_trip_days: 3
+    max_retries: 1
+    timeout_seconds: 30
+    group: weekly
 
   - name: "PQC-11月初-HKG"
     origin: HKG
@@ -86,6 +90,9 @@ tasks:
     return_date: "2026-11-09"
     window_days: 1
     min_trip_days: 3
+    max_retries: 1
+    timeout_seconds: 30
+    group: weekly
 
   # ── 富国岛 (PQC) 圣诞 ──
   - name: "PQC-圣诞-CAN"
@@ -95,6 +102,9 @@ tasks:
     return_date: "2026-12-27"
     window_days: 1
     min_trip_days: 3
+    max_retries: 1
+    timeout_seconds: 30
+    group: weekly
 
   - name: "PQC-圣诞-HKG"
     origin: HKG
@@ -103,6 +113,9 @@ tasks:
     return_date: "2026-12-27"
     window_days: 1
     min_trip_days: 3
+    max_retries: 1
+    timeout_seconds: 30
+    group: weekly
 
   # ── 富国岛 (PQC) 元旦 ──
   - name: "PQC-元旦-CAN"
@@ -112,6 +125,9 @@ tasks:
     return_date: "2027-01-04"
     window_days: 1
     min_trip_days: 3
+    max_retries: 1
+    timeout_seconds: 30
+    group: weekly
 
   - name: "PQC-元旦-HKG"
     origin: HKG
@@ -120,6 +136,9 @@ tasks:
     return_date: "2027-01-04"
     window_days: 1
     min_trip_days: 3
+    max_retries: 1
+    timeout_seconds: 30
+    group: weekly
 
   # ── 富国岛 (PQC) 年前 ──
   - name: "PQC-年前-CAN"
@@ -129,6 +148,9 @@ tasks:
     return_date: "2027-01-25"
     window_days: 1
     min_trip_days: 3
+    max_retries: 1
+    timeout_seconds: 30
+    group: weekly
 
   - name: "PQC-年前-HKG"
     origin: HKG
@@ -137,3 +159,6 @@ tasks:
     return_date: "2027-01-25"
     window_days: 1
     min_trip_days: 3
+    max_retries: 1
+    timeout_seconds: 30
+    group: weekly

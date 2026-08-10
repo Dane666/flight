@@ -1,15 +1,16 @@
-name: Nightly Flight Monitor (Daily)
+name: Weekly Flight Monitor (Slow Routes)
+
+# 低频调度：仅执行 config.yaml 中 group: weekly 的慢路由（如 PQC 富国岛）。
+# 这些路由在 GitHub 云 IP 上 Trip.com 常超时/无结果，已降 max_retries 与
+# timeout_seconds，但单次仍较慢，故拆到每周一次，避免拖慢每日那霸(OKA)监控。
 
 on:
-  push:
-    branches:
-      - main
   schedule:
-    - cron: '0 17 * * *'  # 每天凌晨 01:00 (UTC+8)
+    - cron: '0 18 * * 1'  # 每周一 02:00 (UTC+8)
   workflow_dispatch:
 
 jobs:
-  run-all-tasks:
+  run-weekly-tasks:
     runs-on: ubuntu-latest
     timeout-minutes: 120
 
@@ -35,7 +36,7 @@ jobs:
         run: |
           python -m pytest tests/ -q
 
-      - name: Run daily search tasks
+      - name: Run weekly search tasks
         env:
           BARK_DEVICE_KEY: ${{ secrets.BARK_DEVICE_KEY }}
         run: |
@@ -43,9 +44,9 @@ jobs:
           import yaml
           with open('config.yaml') as f:
               tasks = yaml.safe_load(f).get('tasks', [])
-          print(len([t for t in tasks if (t.get('group') or 'daily') == 'daily']))
-          ") 个 daily 分组任务"
-          python main.py run-tasks --group daily
+          print(len([t for t in tasks if (t.get('group') or 'daily') == 'weekly']))
+          ") 个 weekly 分组任务"
+          python main.py run-tasks --group weekly
 
       - name: Upload debug artifacts
         if: always()

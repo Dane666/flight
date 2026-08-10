@@ -1336,6 +1336,8 @@ class FlightMonitor:
         destination: str,
         date_pairs: list[tuple[date, date]],
         header: str,
+        max_retries: int | None = None,
+        timeout_seconds: int | None = None,
     ) -> tuple[
         dict[str, str | float | None] | None,
         int,
@@ -1355,6 +1357,8 @@ class FlightMonitor:
                 depart_date=depart,
                 return_date=ret,
                 currency=self.config.currency,
+                max_retries=max_retries,
+                timeout_seconds=timeout_seconds,
             )
             if source_price is None:
                 continue
@@ -1466,6 +1470,8 @@ class FlightMonitor:
         window_days: int = 2,
         label: str = "",
         min_trip_days: int | None = None,
+        max_retries: int | None = None,
+        timeout_seconds: int | None = None,
     ) -> None:
         """单次手工搜索：多目的地对比，滑动窗口检索。
         """
@@ -1512,7 +1518,12 @@ class FlightMonitor:
                 if dest == origin:
                     continue
                 best, qc, hc = self._scan_one_destination(
-                    origin, dest, pairs, header,
+                    origin,
+                    dest,
+                    pairs,
+                    header,
+                    max_retries=max_retries,
+                    timeout_seconds=timeout_seconds,
                 )
                 print(
                     f"[SEARCH-RESULT]{header} {origin}->{dest} "

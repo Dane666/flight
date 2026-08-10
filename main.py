@@ -27,6 +27,7 @@ def build_monitor(config_path: Path) -> FlightMonitor:
     elif provider_name == "trip_scrape":
         provider = TripScrapePriceProvider(
             timeout_seconds=config.trip_scrape_timeout_seconds,
+            max_retries=config.trip_scrape_max_retries,
         )
     else:
         raise ValueError(
@@ -143,12 +144,24 @@ def cmd_run_tasks(args: argparse.Namespace) -> None:
     config_path = Path(args.config)
     config = load_config(config_path)
 
+    group = (getattr(args, "group", None) or "daily").strip().lower()
+
+    selected = [t for t in config.tasks if (t.group or "daily") == group]
+    if not selected:
+        print(f"没有属于分组「{group}」的任务，无需执行。")
+        return
+
     if not config.tasks:
         print("配置文件中没有定义任何任务（tasks 为空），无需执行。")
         return
 
+    print(
+        f"分组「{group}」共 {len(selected)}/{len(config.tasks)} 个任务待执行",
+        flush=True,
+    )
+
     # 每个任务独立构建 monitor，确保每次搜索使用干净的状态
-    for i, task in enumerate(config.tasks, start=1):
+    for i, task in enumerate(selected, start=1):
         print(f"\n{'=' * 60}")
         print(f"[{i}/{len(config.tasks)}] 执行任务: {task.name}")
         print(f"  出发地: {task.origin} → 目的地: {task.destination}")
@@ -181,6 +194,8 @@ def cmd_run_tasks(args: argparse.Namespace) -> None:
             window_days=task.window_days,
             label=task.name,
             min_trip_days=task.min_trip_days,
+            max_retries=task.max_retries,
+            timeout_seconds=task.timeout_seconds,
         )
 
     print(f"\n全部 {len(config.tasks)} 个任务执行完成。")
@@ -281,6 +296,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     run_tasks_parser.add_argument(
         "--config", default="config.yaml", help="配置文件路径"
+    )
+    run_tasks_parser.add_argument(
+        "--group",
+        default="daily",
+        help="仅执行指定分组的任务（如 daily/weekly），默认 daily",
     )
     run_tasks_parser.set_defaults(func=cmd_run_tasks)
 

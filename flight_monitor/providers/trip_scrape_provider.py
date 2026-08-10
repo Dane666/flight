@@ -1077,7 +1077,17 @@ class TripScrapePriceProvider(PriceProvider):
         depart_date: date,
         return_date: date,
         currency: str,
+        max_retries: int | None = None,
+        timeout_seconds: int | None = None,
     ) -> float | None:
+        eff_max_retries = (
+            max_retries if max_retries is not None else self._max_retries
+        )
+        eff_timeout = (
+            timeout_seconds
+            if timeout_seconds is not None
+            else self._timeout_seconds
+        )
         self._last_quote_meta = {}
         url = self._build_trip_url(
             origin=origin,
@@ -1086,11 +1096,11 @@ class TripScrapePriceProvider(PriceProvider):
             return_date=return_date,
         )
 
-        for attempt in range(1, self._max_retries + 1):
+        for attempt in range(1, eff_max_retries + 1):
             self._log(
                 "[SCRAPE] 开始抓取 "
                 f"{origin}->{destination} {depart_date}/{return_date} "
-                f"attempt={attempt}/{self._max_retries}",
+                f"attempt={attempt}/{eff_max_retries}",
             )
             try:
                 # 每次抓取使用独立的 sync_playwright() 上下文并完整退出，
@@ -1122,7 +1132,7 @@ class TripScrapePriceProvider(PriceProvider):
                         else route.continue_(),
                     )
                     page = context.new_page()
-                    page.set_default_timeout(self._timeout_seconds * 1000)
+                    page.set_default_timeout(eff_timeout * 1000)
                     snapshots: list[dict[str, str]] = []
                     price: float | None = None
                     meta: dict[str, str | float | None] = {}
@@ -1130,7 +1140,7 @@ class TripScrapePriceProvider(PriceProvider):
                         page.goto(
                             url,
                             wait_until="domcontentloaded",
-                            timeout=self._timeout_seconds * 1000,
+                            timeout=eff_timeout * 1000,
                         )
                         self._wait_for_search_results(page)
                         price, meta, snapshots = self._extract_from_loaded_page(
