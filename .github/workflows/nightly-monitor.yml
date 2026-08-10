@@ -36,6 +36,7 @@ jobs:
           python -m pytest tests/ -q
 
       - name: Run daily search tasks
+        timeout-minutes: 15
         env:
           BARK_DEVICE_KEY: ${{ secrets.BARK_DEVICE_KEY }}
         run: |
@@ -52,5 +53,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: trip-scrape-debug
-          path: artifacts/
+          path: data/trip_debug_snapshots/
           if-no-files-found: ignore

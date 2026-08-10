@@ -1130,7 +1130,7 @@ class TripScrapePriceProvider(PriceProvider):
                 f"{hard_timeout}s，强制终止子进程 {origin}->{destination}"
             )
             _terminate_process_tree(proc)
-            proc.join()
+            proc.join(timeout=5)
         else:
             try:
                 if not result_queue.empty():
@@ -1138,9 +1138,10 @@ class TripScrapePriceProvider(PriceProvider):
             except Exception as error:
                 self._log(f"[WARN] 读取子进程结果失败: {error}")
 
+        # 子进程可能在强杀分支被 SIGKILL，其 Queue feeder 线程不会正常结束；
+        # 若调用 join_thread() 父进程会死锁。cancel_join_thread 可避免该死锁。
         try:
-            result_queue.close()
-            result_queue.join_thread()
+            result_queue.cancel_join_thread()
         except Exception:
             pass
 
