@@ -70,4 +70,70 @@ tasks:
     min_trip_days: 3
     no_thailand: true
 
-  # ── 验证用：临时仅保留 OKA 任务，跑完即还原 ──
+  # ── 富国岛 (PQC) 11月初 ──
+  - name: "PQC-11月初-CAN"
+    origin: CAN
+    destination: PQC
+    depart_date: "2026-11-06"
+    return_date: "2026-11-09"
+    window_days: 1
+    min_trip_days: 3
+
+  - name: "PQC-11月初-HKG"
+    origin: HKG
+    destination: PQC
+    depart_date: "2026-11-06"
+    return_date: "2026-11-09"
+    window_days: 1
+    min_trip_days: 3
+
+  # ── 富国岛 (PQC) 圣诞 ──
+  - name: "PQC-圣诞-CAN"
+    origin: CAN
+    destination: PQC
+    depart_date: "2026-12-24"
+    return_date: "2026-12-27"
+    window_days: 1
+    min_trip_days: 3
+
+  - name: "PQC-圣诞-HKG"
+    origin: HKG
+    destination: PQC
+    depart_date: "2026-12-24"
+    return_date: "2026-12-27"
+    window_days: 1
+    min_trip_days: 3
+
+  # ── 富国岛 (PQC) 元旦 ──
+  - name: "PQC-元旦-CAN"
+    origin: CAN
+    destination: PQC
+    depart_date: "2027-01-01"
+    return_date: "2027-01-04"
+    window_days: 1
+    min_trip_days: 3
+
+  - name: "PQC-元旦-HKG"
+    origin: HKG
+    destination: PQC
+    depart_date: "2027-01-01"
+    return_date: "2027-01-04"
+    window_days: 1
+    min_trip_days: 3
+
+  # ── 富国岛 (PQC) 年前 ──
+  - name: "PQC-年前-CAN"
+    origin: CAN
+    destination: PQC
+    depart_date: "2027-01-22"
+    return_date: "2027-01-25"
+    window_days: 1
+    min_trip_days: 3
+
+  - name: "PQC-年前-HKG"
+    origin: HKG
+    destination: PQC
+    depart_date: "2027-01-22"
+    return_date: "2027-01-25"
+    window_days: 1
+    min_trip_days: 3
