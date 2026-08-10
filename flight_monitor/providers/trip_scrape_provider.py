@@ -1,4 +1,3 @@
-import atexit
 import json
 import os
 import re
@@ -49,11 +48,6 @@ class TripScrapePriceProvider(PriceProvider):
         self._max_retries = max_retries
         self._last_quote_meta: dict[str, str | float | None] = {}
         self._verbose = verbose
-        self._playwright = None
-        self._browser = None
-        self._context = None
-        self._page = None
-        self._cleanup_registered = False
         self._fast_scan_mode = False
 
     def set_verbose(self, verbose: bool) -> None:
@@ -75,86 +69,6 @@ class TripScrapePriceProvider(PriceProvider):
     def _debug_always_dump(self) -> bool:
         raw = os.getenv("TRIP_SCRAPE_DEBUG_ALWAYS_DUMP", "").strip().lower()
         return raw in {"1", "true", "yes", "on"}
-
-    def _cleanup_browser(self) -> None:
-        page = self._page
-        context = self._context
-        browser = self._browser
-        playwright = self._playwright
-        self._page = None
-        self._context = None
-        self._browser = None
-        self._playwright = None
-
-        if page is not None:
-            try:
-                page.close()
-            except Exception:
-                pass
-        if context is not None:
-            try:
-                context.close()
-            except Exception:
-                pass
-        if browser is not None:
-            try:
-                browser.close()
-            except Exception:
-                pass
-        if playwright is not None:
-            try:
-                playwright.stop()
-            except Exception:
-                pass
-
-    def _ensure_browser(self):
-        if self._browser is not None:
-            return self._browser
-
-        self._playwright = sync_playwright().start()
-        self._browser = self._playwright.chromium.launch(headless=True)
-        if not self._cleanup_registered:
-            atexit.register(self._cleanup_browser)
-            self._cleanup_registered = True
-        return self._browser
-
-    def _get_page(self):
-        """返回复用型 page：整个进程只创建一次 context + 一个 page，
-        后续任务通过 page.goto 复用同一页面导航到新 URL。
-
-        关键修复：Playwright 同步 API 在「第二次 new_context()/new_page()」
-        时会抛出 'Sync API inside asyncio loop' 运行时错误（表现为首个任务
-        成功后，后续任务在新建 page 时崩溃）。持久复用单 page 可让 new_page()
-        只调用一次，彻底绕开该 bug。进程退出时由 _cleanup_browser 统一关闭。
-        """
-        if self._page is not None:
-            return self._page
-
-        browser = self._ensure_browser()
-        context = browser.new_context(
-            user_agent=self.mobile_user_agent,
-            locale="en-US",
-            viewport={"width": 430, "height": 932},
-            screen={"width": 430, "height": 932},
-            is_mobile=True,
-            has_touch=True,
-            device_scale_factor=3,
-        )
-        context.set_extra_http_headers(
-            {
-                "Accept-Language": "en-US,en;q=0.9,zh-CN;q=0.8",
-                "Upgrade-Insecure-Requests": "1",
-            }
-        )
-        context.route(
-            "**/*",
-            lambda route: route.abort()
-            if route.request.resource_type in {"image", "media", "font"}
-            else route.continue_(),
-        )
-        self._context = context
-        self._page = context.new_page()
-        return self._page
 
     def _build_trip_url(
         self,
@@ -1179,46 +1093,84 @@ class TripScrapePriceProvider(PriceProvider):
                 f"attempt={attempt}/{self._max_retries}",
             )
             try:
-                page = self._get_page()
-                page.set_default_timeout(self._timeout_seconds * 1000)
-                snapshots: list[dict[str, str]] = []
-                price: float | None = None
-                meta: dict[str, str | float | None] = {}
-                try:
-                    page.goto(
-                        url,
-                        wait_until="domcontentloaded",
-                        timeout=self._timeout_seconds * 1000,
+                # 每次抓取使用独立的 sync_playwright() 上下文并完整退出，
+                # 避免 Playwright 同步 API 的 'Sync API inside asyncio loop'
+                # 错误：该错误源于跨任务复用的 greenlet 事件循环在首个任务后
+                # 处于"仍在运行"状态，第二次进入即报错。独立上下文可让事件
+                # 循环每次彻底重置（本地同进程多次验证通过）。
+                with sync_playwright() as p:
+                    browser = p.chromium.launch(headless=True)
+                    context = browser.new_context(
+                        user_agent=self.mobile_user_agent,
+                        locale="en-US",
+                        viewport={"width": 430, "height": 932},
+                        screen={"width": 430, "height": 932},
+                        is_mobile=True,
+                        has_touch=True,
+                        device_scale_factor=3,
                     )
-                    self._wait_for_search_results(page)
-                    price, meta, snapshots = self._extract_from_loaded_page(
-                        page,
-                        depart_date=depart_date,
-                        return_date=return_date,
+                    context.set_extra_http_headers(
+                        {
+                            "Accept-Language": "en-US,en;q=0.9,zh-CN;q=0.8",
+                            "Upgrade-Insecure-Requests": "1",
+                        }
                     )
-                    if self._debug_always_dump() or (
-                        price is not None and not self._meta_has_return_details(meta)
-                    ):
-                        self._dump_debug_bundle(
+                    context.route(
+                        "**/*",
+                        lambda route: route.abort()
+                        if route.request.resource_type in {"image", "media", "font"}
+                        else route.continue_(),
+                    )
+                    page = context.new_page()
+                    page.set_default_timeout(self._timeout_seconds * 1000)
+                    snapshots: list[dict[str, str]] = []
+                    price: float | None = None
+                    meta: dict[str, str | float | None] = {}
+                    try:
+                        page.goto(
+                            url,
+                            wait_until="domcontentloaded",
+                            timeout=self._timeout_seconds * 1000,
+                        )
+                        self._wait_for_search_results(page)
+                        price, meta, snapshots = self._extract_from_loaded_page(
                             page,
-                            origin=origin,
-                            destination=destination,
                             depart_date=depart_date,
                             return_date=return_date,
-                            attempt=attempt,
-                            reason=(
-                                "always"
-                                if self._debug_always_dump()
-                                else "missing-return-details"
-                            ),
-                            snapshots=snapshots,
-                            meta=meta,
-                            price=price,
                         )
-                finally:
-                    # page 持久复用（整个进程仅创建一次），不在每次抓取后关闭，
-                    # 避免再次 new_page() 触发 'Sync API inside asyncio loop' 崩溃。
-                    pass
+                        if self._debug_always_dump() or (
+                            price is not None
+                            and not self._meta_has_return_details(meta)
+                        ):
+                            self._dump_debug_bundle(
+                                page,
+                                origin=origin,
+                                destination=destination,
+                                depart_date=depart_date,
+                                return_date=return_date,
+                                attempt=attempt,
+                                reason=(
+                                    "always"
+                                    if self._debug_always_dump()
+                                    else "missing-return-details"
+                                ),
+                                snapshots=snapshots,
+                                meta=meta,
+                                price=price,
+                            )
+                    finally:
+                        try:
+                            page.close()
+                        except Exception:
+                            pass
+                        try:
+                            context.close()
+                        except Exception:
+                            pass
+                        try:
+                            browser.close()
+                        except Exception:
+                            pass
             except Exception as error:
                 page_ref = page if "page" in locals() else None
                 snapshots_ref = snapshots if "snapshots" in locals() else []
@@ -1246,10 +1198,6 @@ class TripScrapePriceProvider(PriceProvider):
                     )
                 except Exception:
                     pass
-                # 注意：不在此处销毁 browser（per-call 的 context/page 已在
-                # finally 关闭）。保留 browser 可避免重试时再次调用
-                # sync_playwright().start()，后者在本项目的 GitHub 运行环境
-                # 中会因 asyncio loop 状态损坏而失败。
                 self._log(
                     "[WARN] Trip 抓取失败 "
                     f"{origin}->{destination} {depart_date}/{return_date} "
