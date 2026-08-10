@@ -163,7 +163,7 @@ def cmd_run_tasks(args: argparse.Namespace) -> None:
     # 每个任务独立构建 monitor，确保每次搜索使用干净的状态
     for i, task in enumerate(selected, start=1):
         print(f"\n{'=' * 60}")
-        print(f"[{i}/{len(config.tasks)}] 执行任务: {task.name}")
+        print(f"[{i}/{len(selected)}] 执行任务: {task.name}")
         print(f"  出发地: {task.origin} → 目的地: {task.destination}")
         print(f"  去程: {task.depart_date}  返程: {task.return_date}")
         print(f"  窗口: ±{task.window_days} 天  最少行程: {task.min_trip_days or config.min_trip_days} 天")
