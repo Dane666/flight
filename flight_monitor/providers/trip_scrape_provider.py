@@ -1,6 +1,8 @@
 import json
+import multiprocessing as mp
 import os
 import re
+import signal
 import time
 from datetime import date, datetime
 from pathlib import Path
@@ -1080,6 +1082,81 @@ class TripScrapePriceProvider(PriceProvider):
         max_retries: int | None = None,
         timeout_seconds: int | None = None,
     ) -> float | None:
+        """公开入口：在独立子进程中执行抓取，用硬墙钟超时保证有界。
+
+        背景：GitHub runner 上曾出现 Chromium 在 browser.close()/finally 阶段挂死，
+        Playwright 的单调用超时（page.goto / set_default_timeout）无法覆盖，导致单次
+        任务卡 40+ 分钟。改为子进程 + 硬超时，超时则整组 kill（含 Chromium 子进程），
+        确保总时长可控。
+        """
+        eff_max_retries = (
+            max_retries if max_retries is not None else self._max_retries
+        )
+        eff_timeout = (
+            timeout_seconds
+            if timeout_seconds is not None
+            else self._timeout_seconds
+        )
+        # 硬墙钟上限：覆盖全部重试 + 浏览器 close 挂死余量。
+        hard_timeout = eff_max_retries * (eff_timeout + 30) + 25
+
+        ctx = mp.get_context("spawn")
+        result_queue: "mp.Queue" = ctx.Queue()
+        worker_args = (
+            result_queue,
+            origin,
+            destination,
+            depart_date,
+            return_date,
+            eff_timeout,
+            eff_max_retries,
+            self._render_wait_ms,
+            os.getenv("TRIP_SCRAPE_DEBUG_DIR", "") or "",
+            os.getenv("TRIP_SCRAPE_DEBUG_ALWAYS_DUMP", "") or "",
+        )
+        proc = ctx.Process(
+            target=_scrape_worker_main,
+            args=worker_args,
+            daemon=True,
+        )
+        proc.start()
+        proc.join(hard_timeout)
+
+        price: float | None = None
+        meta: dict[str, str | float | None] = {}
+        if proc.is_alive():
+            self._log(
+                "[WARN] 抓取超过硬上限 "
+                f"{hard_timeout}s，强制终止子进程 {origin}->{destination}"
+            )
+            _terminate_process_tree(proc)
+            proc.join()
+        else:
+            try:
+                if not result_queue.empty():
+                    _status, price, meta = result_queue.get_nowait()
+            except Exception as error:
+                self._log(f"[WARN] 读取子进程结果失败: {error}")
+
+        try:
+            result_queue.close()
+            result_queue.join_thread()
+        except Exception:
+            pass
+
+        self._last_quote_meta = dict(meta)
+        return price
+
+    def _scrape_with_retries(
+        self,
+        origin: str,
+        destination: str,
+        depart_date: date,
+        return_date: date,
+        currency: str,
+        max_retries: int | None = None,
+        timeout_seconds: int | None = None,
+    ) -> float | None:
         eff_max_retries = (
             max_retries if max_retries is not None else self._max_retries
         )
@@ -1248,3 +1325,64 @@ class TripScrapePriceProvider(PriceProvider):
             time.sleep(min(attempt * 1.5, 5))
 
         return None
+
+
+def _terminate_process_tree(proc: "mp.Process") -> None:
+    """杀死子进程及其整个进程组（含 Chromium 子进程）。"""
+    try:
+        pgid = os.getpgid(proc.pid)
+        os.killpg(pgid, signal.SIGKILL)
+    except Exception:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+
+
+def _scrape_worker_main(
+    result_queue,
+    origin: str,
+    destination: str,
+    depart_date: date,
+    return_date: date,
+    timeout_seconds: int,
+    max_retries: int,
+    render_wait_ms: int,
+    debug_dir: str,
+    debug_always: str,
+) -> None:
+    """在子进程中重建 provider 并执行抓取（带自己的重试循环）。"""
+    try:
+        os.setsid()  # 独立会话，使 Chromium 子进程共享同一 pgid，便于整体 kill
+    except Exception:
+        pass
+    try:
+        if debug_dir:
+            os.environ["TRIP_SCRAPE_DEBUG_DIR"] = debug_dir
+        if debug_always:
+            os.environ["TRIP_SCRAPE_DEBUG_ALWAYS_DUMP"] = "1"
+
+        provider = TripScrapePriceProvider(
+            timeout_seconds=timeout_seconds,
+            render_wait_ms=render_wait_ms,
+            max_retries=max_retries,
+        )
+        price = provider._scrape_with_retries(
+            origin=origin,
+            destination=destination,
+            depart_date=depart_date,
+            return_date=return_date,
+            currency="USD",
+            max_retries=max_retries,
+            timeout_seconds=timeout_seconds,
+        )
+        result_queue.put(("ok", price, provider.get_last_quote_meta()))
+    except Exception as error:
+        print(
+            f"[SCRAPE-WORKER-ERROR] {origin}->{destination}: {error}",
+            flush=True,
+        )
+        try:
+            result_queue.put(("error", None, {}))
+        except Exception:
+            pass
