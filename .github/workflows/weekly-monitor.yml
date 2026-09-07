@@ -4,9 +4,11 @@ name: Weekly Flight Monitor (Slow Routes)
 # 这些路由在 GitHub 云 IP 上 Trip.com 常超时/无结果，已降 max_retries 与
 # timeout_seconds，但单次仍较慢，故拆到每周一次，避免拖慢每日那霸(OKA)监控。
 
+# 定时触发已停用，仅保留手动触发（workflow_dispatch）。
+# 如需恢复每周自动：取消下方注释并 push 即可。
+#   schedule:
+#     - cron: '0 18 * * 1'  # 每周一 02:00 (UTC+8)
 on:
-  schedule:
-    - cron: '0 18 * * 1'  # 每周一 02:00 (UTC+8)
   workflow_dispatch:
 
 jobs:

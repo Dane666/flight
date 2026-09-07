@@ -1,11 +1,10 @@
 name: Nightly Flight Monitor (Daily)
 
+# 定时与 push 触发已停用，仅保留手动触发（workflow_dispatch）。
+# 如需恢复每日自动：取消下方注释并 push 即可。
+#   schedule:
+#     - cron: '0 17 * * *'  # 每天凌晨 01:00 (UTC+8)
 on:
-  push:
-    branches:
-      - main
-  schedule:
-    - cron: '0 17 * * *'  # 每天凌晨 01:00 (UTC+8)
   workflow_dispatch:
 
 jobs:
