@@ -56,5 +56,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: trip-scrape-debug
-          path: data/trip_debug_snapshots/
+          path: artifacts/
           if-no-files-found: ignore
