@@ -1,0 +1,62 @@
+name: Hokkaido Flight Monitor (Monthly Parallel)
+
+# 北海道(HKG↔CTS 新千岁/札幌)区间监控：11月~次年3月、行程 4~5 天且含双休。
+# 5 个月度任务用 matrix 并行跑（各自独立 runner / IP），分散 Trip.com 限流，
+# 总时长约 30~40 分钟，远快于串行 2.5 小时。
+# 定时：每周一 02:00 (UTC+8) 自动触发；也可在 Actions 页面手动 Run workflow。
+
+on:
+  schedule:
+    - cron: '0 18 * * 1'  # 每周一 02:00 (UTC+8)
+  workflow_dispatch:
+
+jobs:
+  hokkaido-month:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { month: "北海道-11月-HKG", key: "m11" }
+          - { month: "北海道-12月-HKG", key: "m12" }
+          - { month: "北海道-01月-HKG", key: "m01" }
+          - { month: "北海道-02月-HKG", key: "m02" }
+          - { month: "北海道-03月-HKG", key: "m03" }
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Install Playwright browser
+        run: |
+          python -m playwright install chromium
+
+      - name: Run tests
+        run: |
+          python -m pytest tests/ -q
+
+      - name: Run Hokkaido month task
+        timeout-minutes: 60
+        env:
+          BARK_DEVICE_KEY: ${{ secrets.BARK_DEVICE_KEY }}
+        run: |
+          echo "执行北海道月度任务: ${{ matrix.month }}"
+          python main.py run-tasks --group hokkaido --task "${{ matrix.month }}"
+
+      - name: Upload debug artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trip-scrape-debug-${{ matrix.key }}
+          path: data/trip_debug_snapshots/
+          if-no-files-found: ignore
