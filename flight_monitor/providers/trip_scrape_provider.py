@@ -201,6 +201,14 @@ class TripScrapePriceProvider(PriceProvider):
         )
         page_has_return_section = self._has_returning_section(lines)
         if in_departure_selection and not page_has_return_section:
+            # 快扫模式例外：快扫不点击推进，页面必然停在去程选择阶段。此处
+            # 返回的价格仅用于候选排序（monitor 用它决定是否值得做一次完整的
+            # enrich 抓取），最终推送的价格由 enrich 的完整抓取重新获取，并
+            # 经「去程+返程时刻齐全」校验后才采纳。
+            # 若在快扫也返回 None，则压根不会产出候选 → enrich 不执行 →
+            # 整轮监控全部空结果（回归）。
+            if self._fast_scan_mode:
+                return min(deduped_prices)
             return None
 
         if page_has_return_section:
