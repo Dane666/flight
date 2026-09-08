@@ -1445,6 +1445,12 @@ class FlightMonitor:
             ) < self._candidate_sort_key(existing):
                 contender_map[sig] = contender
 
+        # 仅保留「完整往返」的候选作为结果。Trip.com 页面常停在“选择去程
+        # 航班”阶段，此时返程航班列表未加载，meta 里 return_depart_time /
+        # return_arrive_time 为空；若把这种只有去程的候选兜底放进来，就会把
+        # 去程选择页上的“Round-trip 预估总价”误当往返总价推送给用户。
+        # 因此这里不做兜底：凡是不含完整返程信息的候选一律不入选，全部缺
+        # 返程时 best_item 保持 None，走下游“空结果”分支。
         best_item: dict[str, str | float | None] | None = None
         for contender in sorted(
             contender_map.values(), key=self._candidate_sort_key,
@@ -1452,11 +1458,9 @@ class FlightMonitor:
             enriched = self._enrich_candidate_details(contender)
             if enriched is None:
                 continue
-            if self._candidate_has_complete_roundtrip(enriched):
-                if self._is_candidate_better_pricewise(enriched, best_item):
-                    best_item = enriched
-                    continue
-            if best_item is None:
+            if not self._candidate_has_complete_roundtrip(enriched):
+                continue
+            if self._is_candidate_better_pricewise(enriched, best_item):
                 best_item = enriched
 
         return best_item, query_count, hit_count

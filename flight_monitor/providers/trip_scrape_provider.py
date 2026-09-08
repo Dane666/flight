@@ -186,7 +186,24 @@ class TripScrapePriceProvider(PriceProvider):
             return total_keyword_price
 
         deduped_prices = sorted({price for price in prices})
-        if self._has_returning_section(result_lines):
+
+        # 往返校验：当页面停在“选择去程航班”阶段（尚未完成返程航段选择）时，
+        # 页面上标注的“Round-trip”价格只是该去程对应的预估往返总价，返程航班
+        # 并未真正加载出来，不可当作可靠的往返总价返回。此时应返回 None，避免
+        # 把“去程价/预估总价”误当往返价推送给用户。
+        # 判定依据：整个页面文本（而非仅 start_idx 后 80 行）里是否存在返程
+        # section（如 “2. returning” / “returning to” / “select return flight”）。
+        # 若存在“选择去程/返程”的交互标记但无返程 section，说明尚在去程选择阶段。
+        in_departure_selection = any(
+            marker in line.lower()
+            for line in lines
+            for marker in ("select departure flight", "select return flight")
+        )
+        page_has_return_section = self._has_returning_section(lines)
+        if in_departure_selection and not page_has_return_section:
+            return None
+
+        if page_has_return_section:
             inferred_total = self._infer_roundtrip_total_price(deduped_prices)
             if inferred_total is not None:
                 return inferred_total
