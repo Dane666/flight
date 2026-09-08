@@ -249,7 +249,12 @@ class TripScrapePriceProvider(PriceProvider):
     def _has_returning_section(self, lines: list[str]) -> bool:
         for line in lines:
             lower_line = line.lower()
-            if "2. returning" in lower_line or "returning to" in lower_line:
+            if (
+                "2. returning" in lower_line
+                or "returning to" in lower_line
+                or "select return flight" in lower_line
+                or "2 return" in lower_line
+            ):
                 return True
         return False
 
@@ -790,6 +795,66 @@ class TripScrapePriceProvider(PriceProvider):
             delay_ms=2800,
         )
 
+    def _click_return_result_card(
+        self,
+        page,
+    ) -> str | None:
+        """点击返程航段的第一张卡片，进入往返总价确认阶段。
+
+        Trip.com 移动端往返选择分两步：先去程页点选去程航班，进入返程页
+        后点选返程航班，才会出现真实的往返总价。返程卡片 testid 前缀为
+        ``2_flightlist_card_``（去程为 ``1_``）。
+        """
+        card_selectors = (
+            '[testid^="2_flightlist_card_"]',
+            '[testid^="2_flightlist_minicard_"]',
+            '[testid^="return_flightlist_card_"]',
+            '[testid^="return_flightlist_minicard_"]',
+        )
+        return self._click_first_visible_selector(
+            page,
+            selectors=card_selectors,
+            delay_ms=2800,
+        )
+
+    def _page_stage(self, page) -> str:
+        """识别当前页面所处阶段。
+
+        返回 ``departure``（去程选择页）、``return``（返程选择页）、
+        ``total``（已出现往返总价/确认页）或 ``unknown``。
+        """
+        try:
+            text = page.inner_text("body")
+        except Exception:
+            return "unknown"
+        lower_text = text.lower()
+
+        # 已出现往返总价：常见文案如 "Total" / "total price" 且伴随去返两段信息
+        if (
+            "total" in lower_text
+            and self._has_returning_section(
+                [line.strip() for line in text.splitlines() if line.strip()]
+            )
+        ):
+            return "total"
+
+        # 返程选择页：明确出现“选择返程航班”文案
+        if "select return flight" in lower_text or "2 return" in lower_text:
+            return "return"
+
+        # 去程选择页
+        if "select departure flight" in lower_text or "1 depart" in lower_text:
+            return "departure"
+
+        # 依据 testid 前缀判断：出现 2_flightlist 即返程阶段
+        try:
+            if page.locator('[testid^="2_flightlist_card_"]').count() > 0:
+                return "return"
+        except Exception:
+            pass
+
+        return "unknown"
+
     def _collect_page_snapshot(
         self,
         page,
@@ -888,37 +953,66 @@ class TripScrapePriceProvider(PriceProvider):
         page,
         snapshots: list[dict[str, str]],
     ) -> None:
+        """推进到「去程→返程→往返总价」的完整链路。
+
+        Trip.com 移动端往返选择是两步走：先去程页点选去程航班，进入返程页
+        点选返程航班，之后才出现真实往返总价。此前流程只点了去程卡片就停，
+        导致 meta 里返程信息恒空、且把去程选择页上的预估往返价当总价。
+
+        本方法按页面阶段（departure → return → total）逐级点击推进，并在
+        每一步记录快照供后续价格/返程详情提取。
+        """
         self._dismiss_blocking_popups(page, snapshots)
         if self._page_has_return_context(page):
             return
 
-        card_selector = self._click_departure_result_card(page)
-        if card_selector is not None:
-            self._wait_for_return_context(page)
-            snapshot = self._record_page_snapshot(
-                snapshots,
-                page,
-                phase=(
-                    "select-departure-card-"
-                    f"{self._slugify_debug_value(card_selector)}"
-                ),
-            )
-            if snapshot.get("has_return_context") == "1":
-                return
+        # 阶段 1：去程选择页 → 点选第一张去程卡片，进入返程选择页
+        stage = self._page_stage(page)
+        if stage in ("departure", "unknown"):
+            card_selector = self._click_departure_result_card(page)
+            if card_selector is not None:
+                self._wait_for_return_context(page)
+                self._record_page_snapshot(
+                    snapshots,
+                    page,
+                    phase=(
+                        "select-departure-card-"
+                        f"{self._slugify_debug_value(card_selector)}"
+                    ),
+                )
 
-        for attempt in range(1, 5):
-            if self._page_has_return_context(page):
-                break
-            if not self._click_first_if_present(page, "Select", delay_ms=3000):
-                break
-            self._wait_for_return_context(page, timeout_ms=5000)
-            snapshot = self._record_page_snapshot(
-                snapshots,
-                page,
-                phase=f"select-{attempt}",
-            )
-            if snapshot.get("has_return_context") == "1":
-                break
+        # 阶段 2：返程选择页 → 点选第一张返程卡片，进入往返总价确认页
+        stage = self._page_stage(page)
+        if stage == "return":
+            return_selector = self._click_return_result_card(page)
+            if return_selector is not None:
+                self._wait_for_return_context(page, timeout_ms=9000)
+                self._record_page_snapshot(
+                    snapshots,
+                    page,
+                    phase=(
+                        "select-return-card-"
+                        f"{self._slugify_debug_value(return_selector)}"
+                    ),
+                )
+
+        # 阶段 3：兜底——若仍未进入返程上下文，尝试点击 Select 文本推进
+        if not self._page_has_return_context(page):
+            for attempt in range(1, 5):
+                if self._page_has_return_context(page):
+                    break
+                if not self._click_first_if_present(
+                    page, "Select", delay_ms=3000
+                ):
+                    break
+                self._wait_for_return_context(page, timeout_ms=5000)
+                snapshot = self._record_page_snapshot(
+                    snapshots,
+                    page,
+                    phase=f"select-{attempt}",
+                )
+                if snapshot.get("has_return_context") == "1":
+                    break
 
         self._dismiss_blocking_popups(page, snapshots)
         for step_text in (
