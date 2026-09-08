@@ -22,6 +22,14 @@ class SearchTask:
     max_retries: int | None = None
     timeout_seconds: int | None = None
     group: str = "daily"
+    # ── 区间扫描（可选）──
+    # 设置 scan_start / scan_end 后，任务按区间直接生成日期对，
+    # 而非单固定去返 ± window_days 的展开。
+    scan_start: date | None = None
+    scan_end: date | None = None
+    max_return_date: date | None = None
+    max_trip_span_days: int | None = None
+    require_weekend: bool = False
 
 
 @dataclass(frozen=True)
@@ -87,6 +95,27 @@ def _parse_tasks(raw: list[dict]) -> list[SearchTask]:
                 else None
             ),
             group=str(item.get("group", "daily")).strip().lower(),
+            scan_start=(
+                date.fromisoformat(str(item["scan_start"]))
+                if item.get("scan_start")
+                else None
+            ),
+            scan_end=(
+                date.fromisoformat(str(item["scan_end"]))
+                if item.get("scan_end")
+                else None
+            ),
+            max_return_date=(
+                date.fromisoformat(str(item["max_return_date"]))
+                if item.get("max_return_date")
+                else None
+            ),
+            max_trip_span_days=(
+                int(item["max_trip_span_days"])
+                if item.get("max_trip_span_days") is not None
+                else None
+            ),
+            require_weekend=bool(item.get("require_weekend", False)),
         ))
     return tasks
 
@@ -251,6 +280,17 @@ def save_config(config: AppConfig, output_path: Path) -> None:
                 "window_days": t.window_days,
                 "min_trip_days": t.min_trip_days,
                 "no_thailand": t.no_thailand,
+                "scan_start": (
+                    t.scan_start.isoformat() if t.scan_start else None
+                ),
+                "scan_end": (
+                    t.scan_end.isoformat() if t.scan_end else None
+                ),
+                "max_return_date": (
+                    t.max_return_date.isoformat() if t.max_return_date else None
+                ),
+                "max_trip_span_days": t.max_trip_span_days,
+                "require_weekend": t.require_weekend,
             }
             for t in config.tasks
         ],

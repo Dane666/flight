@@ -14,7 +14,7 @@ from flight_monitor.notifier import (
     EmailNotifier,
 )
 from flight_monitor.providers.base import PriceProvider
-from flight_monitor.scheduling import build_roundtrip_pairs
+from flight_monitor.scheduling import build_roundtrip_pairs, build_scan_pairs
 from flight_monitor.storage import PriceStorage
 
 
@@ -1472,21 +1472,46 @@ class FlightMonitor:
         min_trip_days: int | None = None,
         max_retries: int | None = None,
         timeout_seconds: int | None = None,
+        scan_start: date | None = None,
+        scan_end: date | None = None,
+        max_return_date: date | None = None,
+        max_trip_span_days: int | None = None,
+        require_weekend: bool = False,
     ) -> None:
         """单次手工搜索：多目的地对比，滑动窗口检索。
-        """
-        win_start = depart_date - timedelta(days=window_days)
-        win_end = return_date + timedelta(days=window_days)
 
-        pairs = build_roundtrip_pairs(
-            window_start=win_start,
-            window_end=win_end,
-            min_trip_days=(
+        区间扫描模式：当 scan_start / scan_end 均非空时，按区间直接生成
+        日期对（支持 require_weekend / max_trip_span_days 约束）；否则沿用
+        原窗口展开逻辑（单固定去返 ± window_days）。
+        """
+        if scan_start is not None and scan_end is not None:
+            win_start, win_end = scan_start, scan_end
+            eff_min_trip = (
                 min_trip_days
                 if min_trip_days is not None
                 else self.config.min_trip_days
-            ),
-        )
+            )
+            pairs = build_scan_pairs(
+                scan_start=scan_start,
+                scan_end=scan_end,
+                min_trip_days=eff_min_trip,
+                max_trip_span_days=max_trip_span_days,
+                require_weekend=require_weekend,
+                max_return_date=max_return_date,
+            )
+        else:
+            win_start = depart_date - timedelta(days=window_days)
+            win_end = return_date + timedelta(days=window_days)
+
+            pairs = build_roundtrip_pairs(
+                window_start=win_start,
+                window_end=win_end,
+                min_trip_days=(
+                    min_trip_days
+                    if min_trip_days is not None
+                    else self.config.min_trip_days
+                ),
+            )
         if not pairs:
             print(
                 f"[SEARCH] {label} {origin} "

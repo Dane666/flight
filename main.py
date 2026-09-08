@@ -151,6 +151,18 @@ def cmd_run_tasks(args: argparse.Namespace) -> None:
         print(f"没有属于分组「{group}」的任务，无需执行。")
         return
 
+    # 可选：按任务名精确/包含匹配，单独跑某个月度任务
+    task_filter = getattr(args, "task", None)
+    if task_filter:
+        matched = [t for t in selected if t.name == task_filter]
+        if not matched:
+            matched = [t for t in selected if task_filter in t.name]
+        selected = matched
+        if not selected:
+            print(f"分组「{group}」中没有匹配「{task_filter}」的任务。")
+            return
+        print(f"按任务名过滤后剩余 {len(selected)} 个任务。")
+
     if not config.tasks:
         print("配置文件中没有定义任何任务（tasks 为空），无需执行。")
         return
@@ -165,8 +177,17 @@ def cmd_run_tasks(args: argparse.Namespace) -> None:
         print(f"\n{'=' * 60}")
         print(f"[{i}/{len(selected)}] 执行任务: {task.name}")
         print(f"  出发地: {task.origin} → 目的地: {task.destination}")
-        print(f"  去程: {task.depart_date}  返程: {task.return_date}")
-        print(f"  窗口: ±{task.window_days} 天  最少行程: {task.min_trip_days or config.min_trip_days} 天")
+        if task.scan_start and task.scan_end:
+            print(
+                f"  区间扫描: 出发 {task.scan_start} ~ {task.scan_end}  "
+                f"回程上限 {task.max_return_date or task.scan_end}  "
+                f"行程 {task.min_trip_days or config.min_trip_days}"
+                f"~{task.max_trip_span_days or '不限'} 天  "
+                f"含双休={'是' if task.require_weekend else '否'}"
+            )
+        else:
+            print(f"  去程: {task.depart_date}  返程: {task.return_date}")
+            print(f"  窗口: ±{task.window_days} 天  最少行程: {task.min_trip_days or config.min_trip_days} 天")
         print(f"{'=' * 60}")
 
         # 设置任务级调试目录，便于 artifact 上传
@@ -196,6 +217,11 @@ def cmd_run_tasks(args: argparse.Namespace) -> None:
             min_trip_days=task.min_trip_days,
             max_retries=task.max_retries,
             timeout_seconds=task.timeout_seconds,
+            scan_start=task.scan_start,
+            scan_end=task.scan_end,
+            max_return_date=task.max_return_date,
+            max_trip_span_days=task.max_trip_span_days,
+            require_weekend=task.require_weekend,
         )
 
     print(f"\n全部 {len(config.tasks)} 个任务执行完成。")
@@ -300,7 +326,12 @@ def build_parser() -> argparse.ArgumentParser:
     run_tasks_parser.add_argument(
         "--group",
         default="daily",
-        help="仅执行指定分组的任务（如 daily/weekly），默认 daily",
+        help="仅执行指定分组的任务（如 daily/weekly/hokkaido），默认 daily",
+    )
+    run_tasks_parser.add_argument(
+        "--task",
+        default=None,
+        help="按任务名过滤（精确或包含匹配），用于单独跑某个任务，如某个月度任务",
     )
     run_tasks_parser.set_defaults(func=cmd_run_tasks)
 
