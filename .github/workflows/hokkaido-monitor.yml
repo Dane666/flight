@@ -6,9 +6,6 @@ name: Hokkaido Flight Monitor (Monthly Parallel)
 # 定时：每周一 02:00 (UTC+8) 自动触发；也可在 Actions 页面手动 Run workflow。
 
 on:
-  push:
-    branches:
-      - main # 临时手动触发，跑完即撤
   schedule:
     - cron: '0 18 * * 1'  # 每周一 02:00 (UTC+8)
   workflow_dispatch:
