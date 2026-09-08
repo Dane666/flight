@@ -221,12 +221,44 @@ class TripScrapePriceProvider(PriceProvider):
             "round trip",
             "roundtrip",
             "per adult",
+            "round-trip price per person",
+            "round-trip price per passenger",
+            "round trip price per person",
         )
         for index, line in enumerate(lines):
             lower_line = line.lower()
             if not any(keyword in lower_line for keyword in keywords):
                 continue
             for probe in range(max(0, index - 1), min(len(lines), index + 3)):
+                price = self._extract_price_token_value(lines[probe])
+                if price is not None:
+                    return price
+        return None
+
+    def _extract_roundtrip_total_price(self, page_text: str) -> float | None:
+        """从全页面提取明确的“往返单人总价”。
+
+        进入返程航段选择后，Trip.com 页面会展示明确的往返总价标记，如
+        ``Round-trip price per person`` / ``Round-trip price per passenger`` /
+        ``Round-trip price per adult``，紧跟（或紧邻）一个总价数字。此前的
+        ``_extract_result_list_price`` 只取去程列表前 80 行，覆盖不到这个
+        位于页面靠后的总价，导致返程推进成功后仍提取不到价格。
+        """
+        lines = [line.strip() for line in page_text.splitlines() if line.strip()]
+        total_markers = (
+            "round-trip price per person",
+            "round trip price per person",
+            "round-trip price per passenger",
+            "round trip price per passenger",
+            "round-trip price per adult",
+            "round trip price per adult",
+        )
+        for index, line in enumerate(lines):
+            lower_line = line.lower()
+            if not any(marker in lower_line for marker in total_markers):
+                continue
+            # 总价可能紧邻标记行（前一行或后一行）
+            for probe in range(max(0, index - 2), min(len(lines), index + 3)):
                 price = self._extract_price_token_value(lines[probe])
                 if price is not None:
                     return price
@@ -605,7 +637,6 @@ class TripScrapePriceProvider(PriceProvider):
                 "returning to",
                 "select return flight",
                 "2 return",
-                "return",
             ),
         )
         return_section = self._find_section(
@@ -615,7 +646,6 @@ class TripScrapePriceProvider(PriceProvider):
                 "returning to",
                 "select return flight",
                 "2 return",
-                "return",
             ),
         )
 
@@ -1141,6 +1171,12 @@ class TripScrapePriceProvider(PriceProvider):
                 price = self._extract_result_list_price(text)
                 if price is not None:
                     phase_prices.append(price)
+                # 返程航段选择后，页面靠后位置有明确的往返单人总价标记
+                # （Round-trip price per person），_extract_result_list_price
+                # 覆盖不到，这里单独兜底提取真实往返总价。
+                total_price = self._extract_roundtrip_total_price(text)
+                if total_price is not None:
+                    phase_prices.append(total_price)
             if not phase_prices:
                 continue
             price = min(phase_prices)
